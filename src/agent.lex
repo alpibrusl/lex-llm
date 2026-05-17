@@ -101,7 +101,7 @@ fn run_steps(
     [d.StepDone(msg.AssistantMsg("[max_steps reached]", []))]
   } else {
     let messages   := list.concat([msg.SystemMsg(agent.goal)], conv)
-    let raw_deltas := iter.collect(agent.provider.chat(agent.model, messages, agent.tools))
+    let raw_deltas := iter.to_list(agent.provider.chat(agent.model, messages, agent.tools))
     let delta_steps := list.map(raw_deltas, fn (dl :: d.Delta) -> d.Step {
       d.StepDelta(dl)
     })

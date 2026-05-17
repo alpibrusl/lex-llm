@@ -44,7 +44,7 @@ fn structured(
 
 fn call_once(agent :: ag.AgentDef, prompt :: Str) -> [net, llm] Str {
   let messages := [msg.SystemMsg(agent.goal), msg.UserMsg(prompt)]
-  let deltas   := iter.collect(agent.provider.chat(agent.model, messages, []))
+  let deltas   := iter.to_list(agent.provider.chat(agent.model, messages, []))
   collect_text(deltas)
 }
 

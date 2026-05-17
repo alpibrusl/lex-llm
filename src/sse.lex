@@ -27,7 +27,7 @@ fn parse_data_line(line :: Str) -> Option[Str]
 
 # Collect data payloads from an SSE line stream, stopping at "[DONE]".
 fn data_payloads(lines :: Iter[Str]) -> [net] List[Str] {
-  list.fold(iter.collect(lines), [],
+  list.fold(iter.to_list(lines), [],
     fn (acc :: List[Str], line :: Str) -> List[Str] {
       match parse_data_line(line) {
         None       => acc,

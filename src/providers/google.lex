@@ -54,7 +54,7 @@ fn chat(
     Err(_)  => iter.from_list([]),
     Ok(it)  => it,
   }
-  let lines := iter.collect(raw_lines)
+  let lines := iter.to_list(raw_lines)
   parse_stream(lines)
 }
 

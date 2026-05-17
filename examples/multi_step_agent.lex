@@ -150,6 +150,6 @@ fn summarise_steps(steps :: List[d.Step]) -> Str {
 fn main() -> [net, llm, io, proc] Str {
   let agent := make_agent()
   let task  := "Please do all three tasks: (1) calculate 17 * 3 + 8, (2) count the words in 'the quick brown fox jumps over the lazy dog', (3) convert 'hello world from lex-llm' to title case."
-  let steps := iter.collect(ag.run_loop(agent, [msg.UserMsg(task)]))
+  let steps := iter.to_list(ag.run_loop(agent, [msg.UserMsg(task)]))
   summarise_steps(steps)
 }
