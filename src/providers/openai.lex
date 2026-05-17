@@ -38,7 +38,7 @@ fn make_provider(config :: OpenAIConfig) -> prov.Provider {
       model    :: prov.ModelRef,
       messages :: List[msg.Message],
       tools    :: List[t.Tool]
-    ) -> [net] Iter[d.Delta] {
+    ) -> [net, llm] Iter[d.Delta] {
       chat(config, model, messages, tools)
     },
   }
@@ -49,7 +49,7 @@ fn chat(
   model    :: prov.ModelRef,
   messages :: List[msg.Message],
   tools    :: List[t.Tool]
-) -> [net] Iter[d.Delta] {
+) -> [net, llm] Iter[d.Delta] {
   let body    := build_request(model, messages, tools)
   let headers := sse.json_post_headers(config.api_key)
   let lines   := match http.stream_lines(config.base_url, headers, body) {

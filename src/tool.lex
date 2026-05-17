@@ -5,10 +5,10 @@
 # args before dispatch (OpenCode pattern: invalid args → recoverable
 # error → model retries with corrected input).
 #
-# Effect note: execute is declared [net] because run_loop is already
-# [net]. Pure tools satisfy this constraint structurally. Tools needing
-# [io] or [proc] would require those effects added to the agent loop.
-# Tracked in lex-llm#3.
+# Effect note: execute is declared [net, io, proc] so tools may perform
+# HTTP calls, filesystem I/O, or shell execution without widening the
+# agent-loop signature further. Pure tools satisfy this constraint
+# structurally (unused declared effects are ignored by the type checker).
 
 import "lex-schema/schema"     as s
 import "lex-schema/json_value" as jv
@@ -21,7 +21,7 @@ type Tool = {
   name        :: Str,
   description :: Str,
   params      :: s.ModelSchema,
-  execute     :: (jv.Json) -> [net] Result[jv.Json, e.Errors],
+  execute     :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors],
 }
 
 # Canonical constructor.
@@ -29,14 +29,14 @@ fn define(
   name        :: Str,
   description :: Str,
   params      :: s.ModelSchema,
-  execute     :: (jv.Json) -> [net] Result[jv.Json, e.Errors]
+  execute     :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors]
 ) -> Tool {
   { name: name, description: description, params: params, execute: execute }
 }
 
 # Validate args through the tool's param schema then dispatch.
 # Invalid args return Err so the caller can feed them back to the model.
-fn validate_and_exec(tool :: Tool, args :: jv.Json) -> [net] Result[jv.Json, e.Errors] {
+fn validate_and_exec(tool :: Tool, args :: jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors] {
   match s.validate(tool.params, args) {
     Err(errs) => Err(errs),
     Ok(valid) => tool.execute(valid),

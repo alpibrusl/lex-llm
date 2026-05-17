@@ -29,7 +29,7 @@ fn structured(
   agent  :: ag.AgentDef,
   prompt :: Str,
   schema :: s.ModelSchema
-) -> [net] Result[jv.Json, e.Errors] {
+) -> [net, llm] Result[jv.Json, e.Errors] {
   let json_prompt := build_json_prompt(prompt, schema)
   let first_reply := call_once(agent, json_prompt)
   match validate_reply(schema, first_reply) {
@@ -42,7 +42,7 @@ fn structured(
   }
 }
 
-fn call_once(agent :: ag.AgentDef, prompt :: Str) -> [net] Str {
+fn call_once(agent :: ag.AgentDef, prompt :: Str) -> [net, llm] Str {
   let messages := [msg.SystemMsg(agent.goal), msg.UserMsg(prompt)]
   let deltas   := iter.collect(agent.provider.chat(agent.model, messages, []))
   collect_text(deltas)

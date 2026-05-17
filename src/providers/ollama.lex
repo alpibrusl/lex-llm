@@ -37,7 +37,7 @@ fn make_provider(config :: OllamaConfig) -> prov.Provider {
       model    :: prov.ModelRef,
       messages :: List[msg.Message],
       tools    :: List[t.Tool]
-    ) -> [net] Iter[d.Delta] {
+    ) -> [net, llm] Iter[d.Delta] {
       chat(config, model, messages, tools)
     },
   }
@@ -48,7 +48,7 @@ fn chat(
   model    :: prov.ModelRef,
   messages :: List[msg.Message],
   tools    :: List[t.Tool]
-) -> [net] Iter[d.Delta] {
+) -> [net, llm] Iter[d.Delta] {
   let body    := build_request(model, messages, tools)
   let headers := sse.local_post_headers()
   let raw_lines := match http.stream_lines(config.base_url, headers, body) {
@@ -122,7 +122,7 @@ fn encode_tool_call(call :: msg.ToolCall) -> jv.Json {
 #                  "tool_calls": [{"function":{"name":"...","arguments":{...}}}] },
 #     "done": true }
 
-fn parse_stream(lines :: List[Str]) -> [net] Iter[d.Delta] {
+fn parse_stream(lines :: List[Str]) -> Iter[d.Delta] {
   let deltas := list.fold(lines, [],
     fn (acc :: List[d.Delta], line :: Str) -> List[d.Delta] {
       let t := str.trim(line)
