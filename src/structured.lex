@@ -48,7 +48,13 @@ fn call_once(agent :: ag.AgentDef, prompt :: Str) -> [net, llm] Str {
   collect_text(deltas)
 }
 
-fn collect_text(deltas :: List[d.Delta]) -> Str {
+fn collect_text(deltas :: List[d.Delta]) -> Str
+  examples {
+    collect_text([d.TextChunk("hello"), d.TextChunk(" world")]) => "hello world",
+    collect_text([d.FinishDelta("stop")])                        => "",
+    collect_text([])                                             => "",
+  }
+{
   list.fold(deltas, "", fn (acc :: Str, dl :: d.Delta) -> Str {
     match dl {
       d.TextChunk(s) => str.concat(acc, s),
@@ -95,7 +101,14 @@ fn build_retry_prompt(
 }
 
 # Strip a ```json...``` fence if present; return as-is otherwise.
-fn extract_json_block(reply :: Str) -> Str {
+fn extract_json_block(reply :: Str) -> Str
+  examples {
+    extract_json_block("{\"x\":1}")                      => "{\"x\":1}",
+    extract_json_block("```json\n{\"x\":1}\n```")        => "{\"x\":1}",
+    extract_json_block("```\n{\"x\":1}\n```")            => "{\"x\":1}",
+    extract_json_block("  ```json\n{\"x\":1}\n```  ")    => "{\"x\":1}",
+  }
+{
   let t := str.trim(reply)
   match str.strip_prefix(t, "```json") {
     Some(rest) => match str.strip_suffix(str.trim(rest), "```") {
