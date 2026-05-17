@@ -43,7 +43,7 @@ fn make_calculator() -> t.Tool {
     "calculator",
     "Evaluate a simple arithmetic expression (supports +, -, *, /).",
     params,
-    fn (args :: jv.Json) -> [net] Result[jv.Json, e.Errors] {
+    fn (args :: jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors] {
       let expr := match jv.get_field(args, "expression") {
         Some(JStr(s)) => s, _ => ""
       }
@@ -63,7 +63,7 @@ fn make_word_count() -> t.Tool {
     "word_count",
     "Count the number of whitespace-delimited words in the provided text.",
     params,
-    fn (args :: jv.Json) -> [net] Result[jv.Json, e.Errors] {
+    fn (args :: jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors] {
       let text  := match jv.get_field(args, "text") { Some(JStr(s)) => s, _ => "" }
       let count := list.len(str.split(str.trim(text), " "))
       Ok(JObj([("count", JInt(count))]))
@@ -80,7 +80,7 @@ fn make_title_case() -> t.Tool {
     "title_case",
     "Convert the provided text to Title Case (each word capitalised).",
     params,
-    fn (args :: jv.Json) -> [net] Result[jv.Json, e.Errors] {
+    fn (args :: jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors] {
       let text := match jv.get_field(args, "text") { Some(JStr(s)) => s, _ => "" }
       Ok(JObj([("result", JStr(to_title_case(text)))]))
     })
@@ -147,7 +147,7 @@ fn summarise_steps(steps :: List[d.Step]) -> Str {
   })
 }
 
-fn main() -> [net] Str {
+fn main() -> [net, llm, io, proc] Str {
   let agent := make_agent()
   let task  := "Please do all three tasks: (1) calculate 17 * 3 + 8, (2) count the words in 'the quick brown fox jumps over the lazy dog', (3) convert 'hello world from lex-llm' to title case."
   let steps := iter.collect(ag.run_loop(agent, [msg.UserMsg(task)]))

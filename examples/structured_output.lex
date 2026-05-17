@@ -71,7 +71,7 @@ fn make_agent(api_key :: Str) -> ag.AgentDef {
 fn extract_movie_review(
   agent :: ag.AgentDef,
   text  :: Str
-) -> [net] Result[jv.Json, e.Errors] {
+) -> [net, llm] Result[jv.Json, e.Errors] {
   st.structured(agent,
     str.concat("Extract a structured movie review from the following text:\n", text),
     movie_review_schema())
@@ -80,7 +80,7 @@ fn extract_movie_review(
 fn extract_address(
   agent :: ag.AgentDef,
   text  :: Str
-) -> [net] Result[jv.Json, e.Errors] {
+) -> [net, llm] Result[jv.Json, e.Errors] {
   st.structured(agent,
     str.concat("Parse the following address into structured fields:\n", text),
     address_schema())
@@ -88,7 +88,7 @@ fn extract_address(
 
 # ---- Demo entry points -------------------------------------------
 
-fn demo_movie(agent :: ag.AgentDef) -> [net] Str {
+fn demo_movie(agent :: ag.AgentDef) -> [net, llm] Str {
   match extract_movie_review(agent,
     "Oppenheimer (2023) is a visually stunning and intellectually rich biopic. Nolan delivers his most ambitious film yet. Solid 9.2 out of 10.") {
     Ok(j)     => str.concat("[movie_review] ", jv.stringify_pretty(j)),
@@ -96,7 +96,7 @@ fn demo_movie(agent :: ag.AgentDef) -> [net] Str {
   }
 }
 
-fn demo_address(agent :: ag.AgentDef) -> [net] Str {
+fn demo_address(agent :: ag.AgentDef) -> [net, llm] Str {
   match extract_address(agent,
     "221B Baker Street, London, United Kingdom, NW1 6XE") {
     Ok(j)     => str.concat("[address] ", jv.stringify_pretty(j)),
@@ -107,7 +107,7 @@ fn demo_address(agent :: ag.AgentDef) -> [net] Str {
 # main returns the two results as a combined string.
 # Replace api_key with your actual key or read from env once
 # the [env] effect RFC (lex-lang#XXX) lands.
-fn main(api_key :: Str) -> [net] Str {
+fn main(api_key :: Str) -> [net, llm] Str {
   let agent := make_agent(api_key)
   str.concat(demo_movie(agent), str.concat("\n", demo_address(agent)))
 }
