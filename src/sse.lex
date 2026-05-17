@@ -1,44 +1,15 @@
-# lex-llm — SSE line consumer abstraction
+# lex-llm — SSE parsing helpers
 #
-# Prerequisite spike: alpibrusl/lex-lang#487 investigates whether
-# std.http already supports client-side SSE streaming. Until that
-# spike closes this module uses an EAGER STUB: POST, await full body,
-# split on newlines. This works for development and small responses.
-#
-# UPGRADE PATH once #487 resolves — replace stream_lines with
-# whichever option the spike recommends:
-#
-#   Option A (extend std.http):
-#     http.stream_lines(url, headers, body) -> [net] Iter[Str]
-#
-#   Option B (new std.sse module):
-#     sse.consume(url, headers, body) |> iter.map(fn(ev) -> Str { ev.data })
-#
-#   Option C (no stdlib change — existing primitive confirmed):
-#     Replace with the confirmed streaming primitive from the spike report.
-#
-# All provider adapters call sse.stream_lines — updating this single
-# function switches all four providers simultaneously.
+# Pure helpers for consuming SSE (text/event-stream) line payloads.
+# The transport primitive is http.stream_lines from std.http (lex-lang#487),
+# which performs a streaming HTTP POST and yields the response body
+# line-by-line as Iter[Str]. Provider adapters call http.stream_lines
+# directly and pass the resulting iterator into data_payloads.
 
-import "std.http" as http
 import "std.str"  as str
 import "std.iter" as iter
 import "std.list" as list
 import "std.map"  as map
-
-# Stream SSE lines from a POST request.
-# EAGER STUB — awaits the full response before yielding any lines.
-# Replace body with a true streaming call once lex-lang#487 resolves.
-fn stream_lines(
-  url     :: Str,
-  headers :: Map[Str, Str],
-  body    :: Str
-) -> [net] Iter[Str] {
-  match http.post(url, headers, body) {
-    Err(_)   => iter.from_list([]),
-    Ok(resp) => iter.from_list(str.lines(resp.body)),
-  }
-}
 
 # Parse one SSE line: strip "data: " prefix, return None for comments/blanks.
 fn parse_data_line(line :: Str) -> Option[Str]

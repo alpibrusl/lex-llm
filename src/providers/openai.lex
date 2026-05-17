@@ -1,8 +1,8 @@
 # lex-llm — OpenAI Chat Completions adapter
 #
 # Implements Provider.chat against POST /v1/chat/completions with
-# stream:true. SSE line streaming goes through sse.stream_lines
-# (eager stub; see sse.lex and lex-lang#487 for the upgrade path).
+# stream:true. SSE line streaming uses http.stream_lines from std.http
+# (lex-lang#487), a Rust-backed streaming HTTP POST primitive.
 #
 # Supports any model accessible via the Chat Completions API:
 # GPT-4o, GPT-4o-mini, o1, o3-mini, etc.
@@ -15,6 +15,7 @@ import "../provider" as prov
 import "../sse"      as sse
 
 import "lex-schema/json_value" as jv
+import "std.http" as http
 import "std.list" as list
 import "std.str"  as str
 import "std.iter" as iter
@@ -49,9 +50,13 @@ fn chat(
   messages :: List[msg.Message],
   tools    :: List[t.Tool]
 ) -> [net] Iter[d.Delta] {
-  let body     := build_request(model, messages, tools)
-  let headers  := sse.json_post_headers(config.api_key)
-  let payloads := sse.data_payloads(sse.stream_lines(config.base_url, headers, body))
+  let body    := build_request(model, messages, tools)
+  let headers := sse.json_post_headers(config.api_key)
+  let lines   := match http.stream_lines(config.base_url, headers, body) {
+    Err(_)  => iter.from_list([]),
+    Ok(it)  => it,
+  }
+  let payloads := sse.data_payloads(lines)
   let deltas   := list.fold(payloads, [],
     fn (acc :: List[d.Delta], payload :: Str) -> List[d.Delta] {
       match parse_chunk(payload) {

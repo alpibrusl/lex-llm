@@ -2,7 +2,7 @@
 #
 # Implements Provider.chat against the Gemini streamGenerateContent
 # endpoint. Gemini streams NDJSON responses (one JSON object per line)
-# rather than text/event-stream, but sse.stream_lines handles both since
+# rather than text/event-stream, but http.stream_lines handles both since
 # both arrive as line-delimited text over HTTP.
 #
 # Supported: gemini-2.0-flash, gemini-2.5-pro, gemini-1.5-*
@@ -14,6 +14,7 @@ import "../provider" as prov
 import "../sse"      as sse
 
 import "lex-schema/json_value" as jv
+import "std.http" as http
 import "std.list" as list
 import "std.str"  as str
 import "std.iter" as iter
@@ -46,10 +47,14 @@ fn chat(
   messages :: List[msg.Message],
   tools    :: List[t.Tool]
 ) -> [net] Iter[d.Delta] {
-  let url      := gemini_url(model.model, config.api_key)
-  let body     := build_request(messages, tools)
-  let headers  := sse.local_post_headers()
-  let lines    := iter.collect(sse.stream_lines(url, headers, body))
+  let url     := gemini_url(model.model, config.api_key)
+  let body    := build_request(messages, tools)
+  let headers := sse.local_post_headers()
+  let raw_lines := match http.stream_lines(url, headers, body) {
+    Err(_)  => iter.from_list([]),
+    Ok(it)  => it,
+  }
+  let lines := iter.collect(raw_lines)
   parse_stream(lines)
 }
 
@@ -117,7 +122,7 @@ fn encode_content(m :: msg.Message) -> jv.Json {
             ("parts", JList([JObj([("functionResponse", JObj([
               ("name",     JStr(call_id)),
               ("response", JObj([("output", JStr(content))])),
-            ]))]))]))]),
+            ]))])]))]),
     msg.SystemMsg(_) =>
       JObj([("role", JStr("user")), ("parts", JList([JObj([("text", JStr(""))])]))]),
   }

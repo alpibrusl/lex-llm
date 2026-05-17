@@ -13,6 +13,7 @@ import "../provider" as prov
 import "../sse"      as sse
 
 import "lex-schema/json_value" as jv
+import "std.http" as http
 import "std.list" as list
 import "std.str"  as str
 import "std.iter" as iter
@@ -52,8 +53,11 @@ fn chat(
   let (sys, user_msgs) := split_system(messages)
   let body    := build_request(model, sys, user_msgs, tools)
   let headers := build_headers(config.api_key)
-  let payloads := sse.data_payloads(
-    sse.stream_lines(config.base_url, headers, body))
+  let lines   := match http.stream_lines(config.base_url, headers, body) {
+    Err(_)  => iter.from_list([]),
+    Ok(it)  => it,
+  }
+  let payloads := sse.data_payloads(lines)
   parse_stream(payloads)
 }
 

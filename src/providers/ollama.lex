@@ -15,6 +15,7 @@ import "../provider" as prov
 import "../sse"      as sse
 
 import "lex-schema/json_value" as jv
+import "std.http" as http
 import "std.list" as list
 import "std.str"  as str
 import "std.iter" as iter
@@ -50,7 +51,11 @@ fn chat(
 ) -> [net] Iter[d.Delta] {
   let body    := build_request(model, messages, tools)
   let headers := sse.local_post_headers()
-  let lines   := iter.collect(sse.stream_lines(config.base_url, headers, body))
+  let raw_lines := match http.stream_lines(config.base_url, headers, body) {
+    Err(_)  => iter.from_list([]),
+    Ok(it)  => it,
+  }
+  let lines := iter.collect(raw_lines)
   parse_stream(lines)
 }
 
