@@ -38,7 +38,7 @@ fn make_provider(config :: AnthropicConfig) -> prov.Provider {
       model    :: prov.ModelRef,
       messages :: List[msg.Message],
       tools    :: List[t.Tool]
-    ) -> [net] Iter[d.Delta] {
+    ) -> [net, llm] Iter[d.Delta] {
       chat(config, model, messages, tools)
     },
   }
@@ -49,7 +49,7 @@ fn chat(
   model    :: prov.ModelRef,
   messages :: List[msg.Message],
   tools    :: List[t.Tool]
-) -> [net] Iter[d.Delta] {
+) -> [net, llm] Iter[d.Delta] {
   let (sys, user_msgs) := split_system(messages)
   let body    := build_request(model, sys, user_msgs, tools)
   let headers := build_headers(config.api_key)
@@ -158,7 +158,7 @@ type ParseState = {
   tool_name  :: Str,
 }
 
-fn parse_stream(payloads :: List[Str]) -> [net] Iter[d.Delta] {
+fn parse_stream(payloads :: List[Str]) -> Iter[d.Delta] {
   let init := { block_type: "", tool_id: "", tool_name: "" }
   let (_, deltas) := list.fold(payloads, (init, []),
     fn (

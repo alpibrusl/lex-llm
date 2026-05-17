@@ -35,7 +35,7 @@ fn make_provider(config :: GoogleConfig) -> prov.Provider {
       model    :: prov.ModelRef,
       messages :: List[msg.Message],
       tools    :: List[t.Tool]
-    ) -> [net] Iter[d.Delta] {
+    ) -> [net, llm] Iter[d.Delta] {
       chat(config, model, messages, tools)
     },
   }
@@ -46,7 +46,7 @@ fn chat(
   model    :: prov.ModelRef,
   messages :: List[msg.Message],
   tools    :: List[t.Tool]
-) -> [net] Iter[d.Delta] {
+) -> [net, llm] Iter[d.Delta] {
   let url     := gemini_url(model.model, config.api_key)
   let body    := build_request(messages, tools)
   let headers := sse.local_post_headers()
@@ -130,7 +130,7 @@ fn encode_content(m :: msg.Message) -> jv.Json {
 
 # ---- Response parsing --------------------------------------------
 
-fn parse_stream(lines :: List[Str]) -> [net] Iter[d.Delta] {
+fn parse_stream(lines :: List[Str]) -> Iter[d.Delta] {
   let deltas := list.fold(lines, [],
     fn (acc :: List[d.Delta], line :: Str) -> List[d.Delta] {
       let t := str.trim(line)

@@ -85,7 +85,7 @@ type Dispatch = {
 fn run_loop(
   agent        :: AgentDef,
   conversation :: List[msg.Message]
-) -> [net] Iter[d.Step] {
+) -> [net, llm, io, proc] Iter[d.Step] {
   let budget := unwrap_int(agent.options.max_steps, 20)
   iter.from_list(run_steps(agent, conversation, budget))
 }
@@ -96,7 +96,7 @@ fn run_steps(
   agent  :: AgentDef,
   conv   :: List[msg.Message],
   budget :: Int
-) -> [net] List[d.Step] {
+) -> [net, llm, io, proc] List[d.Step] {
   if budget == 0 {
     [d.StepDone(msg.AssistantMsg("[max_steps reached]", []))]
   } else {
@@ -188,8 +188,8 @@ fn append_arg_chunk(
 fn dispatch_calls(
   tools :: List[t.Tool],
   calls :: List[CollectedCall]
-) -> [net] List[Dispatch] {
-  list.map(calls, fn (call :: CollectedCall) -> [net] Dispatch {
+) -> [net, io, proc] List[Dispatch] {
+  list.map(calls, fn (call :: CollectedCall) -> [net, io, proc] Dispatch {
     dispatch_one(tools, call)
   })
 }
@@ -197,7 +197,7 @@ fn dispatch_calls(
 fn dispatch_one(
   tools :: List[t.Tool],
   call  :: CollectedCall
-) -> [net] Dispatch {
+) -> [net, io, proc] Dispatch {
   let args := parse_args_or_empty(call.args_raw)
   match t.find_by_name(tools, call.name) {
     None =>

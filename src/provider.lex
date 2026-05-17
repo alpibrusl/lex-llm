@@ -4,9 +4,10 @@
 # any auth/config state captured in a closure. The interface is minimal:
 # give me a model, messages, and available tools; return a lazy Iter[Delta].
 #
-# Effect note: all adapters use [net] (HTTP). The narrower [llm]
-# named sub-capability is tracked in alpibrusl/lex-lang#483; once that
-# lands signatures will narrow from [net] to [llm].
+# Effect note: all adapters declare [net, llm]. [net] is required by
+# http.stream_lines; [llm] is a semantic annotation that identifies
+# LLM-inference calls in the effect graph so policies can gate them
+# independently of plain HTTP.
 
 import "./message" as msg
 import "./delta"   as d
@@ -30,5 +31,5 @@ fn ollama(m :: Str) -> ModelRef { { provider: "ollama",    model: m } }
 # chat returns a lazy Iter[Delta]; the caller collects it or re-emits for streaming.
 type Provider = {
   name :: Str,
-  chat :: (ModelRef, List[msg.Message], List[t.Tool]) -> [net] Iter[d.Delta],
+  chat :: (ModelRef, List[msg.Message], List[t.Tool]) -> [net, llm] Iter[d.Delta],
 }
