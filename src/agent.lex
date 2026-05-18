@@ -12,6 +12,7 @@
 #        c. Append AssistantMsg + ToolMsg results; recurse within budget.
 #   5. Otherwise emit StepDone.
 #
+# run_loop_traced: same loop with lex-trail events at each step.
 # Inter-turn per-token streaming will improve once lex-lang#487 closes.
 
 import "./message"  as msg
@@ -22,9 +23,13 @@ import "./provider" as prov
 import "lex-schema/json_value" as jv
 import "lex-schema/error"      as e
 
+import "lex-trail/log"   as trail
+import "lex-trail/kinds" as kinds
+
 import "std.list" as list
 import "std.str"  as str
 import "std.iter" as iter
+import "std.int"  as int
 
 type AgentOptions = {
   temperature :: Option[Float],
@@ -80,7 +85,7 @@ type Dispatch = {
   content :: Str,
 }
 
-# ---- Public entry point ------------------------------------------
+# ---- Public entry points -----------------------------------------
 
 fn run_loop(
   agent        :: AgentDef,
@@ -88,6 +93,16 @@ fn run_loop(
 ) -> [net, llm, io, proc] Iter[d.Step] {
   let budget := unwrap_int(agent.options.max_steps, 20)
   iter.from_list(run_steps(agent, conversation, budget))
+}
+
+fn run_loop_traced(
+  agent        :: AgentDef,
+  conversation :: List[msg.Message],
+  log          :: trail.Log,
+  parent       :: Option[Str],
+) -> [net, llm, io, proc, sql, time] Iter[d.Step] {
+  let budget := unwrap_int(agent.options.max_steps, 20)
+  iter.from_list(run_steps_traced(agent, conversation, budget, log, parent))
 }
 
 # ---- Internal recursion ------------------------------------------
@@ -123,6 +138,46 @@ fn run_steps(
         list.concat(delta_steps,
           list.concat(exec_steps,
             run_steps(agent, new_conv, budget - 1)))
+      },
+      _ =>
+        list.concat(delta_steps,
+          [d.StepDone(msg.AssistantMsg(response.content, []))]),
+    }
+  }
+}
+
+fn run_steps_traced(
+  agent  :: AgentDef,
+  conv   :: List[msg.Message],
+  budget :: Int,
+  log    :: trail.Log,
+  parent :: Option[Str],
+) -> [net, llm, io, proc, sql, time] List[d.Step] {
+  if budget == 0 {
+    [d.StepDone(msg.AssistantMsg("[max_steps reached]", []))]
+  } else {
+    let messages    := list.concat([msg.SystemMsg(agent.goal)], conv)
+    let raw_deltas  := iter.to_list(agent.provider.chat(agent.model, messages, agent.tools))
+    let delta_steps := list.map(raw_deltas, fn (dl :: d.Delta) -> d.Step { d.StepDelta(dl) })
+    let response    := collect_response(raw_deltas)
+    let step_payload := llm_step_json(agent.model, list.len(response.tool_calls))
+    let step_evt     := trail.append(log, kinds.llm_step(), parent, step_payload)
+    let step_id      := match step_evt { Ok(evt) => Some(evt.id), Err(_) => parent }
+    match response.finish_reason {
+      "tool_calls" => {
+        let dispatches    := dispatch_calls_traced(agent.tools, response.tool_calls, log, step_id)
+        let exec_steps    := dispatches_to_steps(dispatches)
+        let tool_messages := dispatches_to_messages(dispatches)
+        let assistant_msg := msg.AssistantMsg(
+          response.content,
+          list.map(response.tool_calls, fn (c :: CollectedCall) -> msg.ToolCall {
+            { id: c.id, name: c.name, args: parse_args_or_empty(c.args_raw) }
+          })
+        )
+        let new_conv := list.concat(conv, list.concat([assistant_msg], tool_messages))
+        list.concat(delta_steps,
+          list.concat(exec_steps,
+            run_steps_traced(agent, new_conv, budget - 1, log, step_id)))
       },
       _ =>
         list.concat(delta_steps,
@@ -194,6 +249,17 @@ fn dispatch_calls(
   })
 }
 
+fn dispatch_calls_traced(
+  tools  :: List[t.Tool],
+  calls  :: List[CollectedCall],
+  log    :: trail.Log,
+  parent :: Option[Str],
+) -> [net, io, proc, sql, time] List[Dispatch] {
+  list.map(calls, fn (call :: CollectedCall) -> [net, io, proc, sql, time] Dispatch {
+    dispatch_one_traced(tools, call, log, parent)
+  })
+}
+
 fn dispatch_one(
   tools :: List[t.Tool],
   call  :: CollectedCall
@@ -214,6 +280,26 @@ fn dispatch_one(
   }
 }
 
+fn dispatch_one_traced(
+  tools  :: List[t.Tool],
+  call   :: CollectedCall,
+  log    :: trail.Log,
+  parent :: Option[Str],
+) -> [net, io, proc, sql, time] Dispatch {
+  let inv_payload  := cap_invoked_json(call.name, call.args_raw)
+  let inv_evt      := trail.append(log, kinds.cap_invoked(), parent, inv_payload)
+  let inv_id       := match inv_evt { Ok(evt) => Some(evt.id), Err(_) => parent }
+  let disp         := dispatch_one(tools, call)
+  let kind         := if disp.success { kinds.cap_completed() } else { kinds.cap_failed() }
+  let out_payload  := if disp.success {
+    cap_completed_json(call.name, disp.content)
+  } else {
+    cap_failed_json(call.name, disp.content)
+  }
+  let trail_result := trail.append(log, kind, inv_id, out_payload)
+  disp
+}
+
 fn dispatches_to_steps(dispatches :: List[Dispatch]) -> List[d.Step] {
   list.fold(dispatches, [],
     fn (acc :: List[d.Step], disp :: Dispatch) -> List[d.Step] {
@@ -228,6 +314,47 @@ fn dispatches_to_messages(dispatches :: List[Dispatch]) -> List[msg.Message] {
   list.map(dispatches, fn (disp :: Dispatch) -> msg.Message {
     msg.ToolMsg(disp.call.id, disp.content)
   })
+}
+
+# ---- Trail JSON helpers ------------------------------------------
+
+fn llm_step_json(model :: prov.ModelRef, tool_call_count :: Int) -> Str
+  examples {
+    llm_step_json(prov.claude_sonnet(), 2) =>
+      "{\"model\":\"claude-sonnet-4-6\",\"tokens_in\":0,\"tokens_out\":0,\"tool_calls\":2}",
+  }
+{
+  str.join([
+    "{\"model\":\"", model.model,
+    "\",\"tokens_in\":0,\"tokens_out\":0,\"tool_calls\":",
+    int.to_str(tool_call_count),
+    "}"
+  ], "")
+}
+
+fn cap_invoked_json(name :: Str, args_raw :: Str) -> Str
+  examples {
+    cap_invoked_json("search", "{}") => "{\"capability\":\"search\",\"args\":{}}",
+  }
+{
+  str.join(["{\"capability\":\"", name, "\",\"args\":", args_raw, "}"], "")
+}
+
+fn cap_completed_json(name :: Str, result :: Str) -> Str
+  examples {
+    cap_completed_json("search", "\"ok\"") => "{\"capability\":\"search\",\"result\":\"ok\"}",
+  }
+{
+  str.join(["{\"capability\":\"", name, "\",\"result\":", result, "}"], "")
+}
+
+fn cap_failed_json(name :: Str, error :: Str) -> Str
+  examples {
+    cap_failed_json("search", "{\"error\":\"nf\"}") =>
+      "{\"capability\":\"search\",\"error\":{\"error\":\"nf\"}}",
+  }
+{
+  str.join(["{\"capability\":\"", name, "\",\"error\":", error, "}"], "")
 }
 
 # ---- Helpers -----------------------------------------------------
