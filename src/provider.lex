@@ -15,7 +15,7 @@ import "./tool"    as t
 
 # Identifies a model at a specific provider.
 type ModelRef = {
-  provider :: Str,   # "openai" | "anthropic" | "google" | "ollama" | "mistral"
+  provider :: Str,   # "openai" | "anthropic" | "google" | "ollama" | "mistral" | "vllm"
   model    :: Str,   # "gpt-4o" | "claude-opus-4-7" | "mistral-large-latest" | ...
 }
 
@@ -40,6 +40,9 @@ fn mistral_nemo()   -> ModelRef { { provider: "mistral",   model: "open-mistral-
 
 # Ollama (local)
 fn ollama(m :: Str) -> ModelRef { { provider: "ollama",    model: m } }
+
+# vLLM (local or remote, OpenAI-compatible)
+fn vllm(m :: Str)   -> ModelRef { { provider: "vllm",      model: m } }
 
 # The provider interface.
 # chat returns a lazy Iter[Delta]; the caller collects it or re-emits for streaming.
