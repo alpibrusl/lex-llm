@@ -1,8 +1,9 @@
 [package]
 name        = "lex-llm"
-version     = "0.1.0"
-description = "Pure-Lex LLM-agent runtime — provider abstraction, tool-call loop, and structured-output validation."
+version     = "0.2.0"
+description = "Pure-Lex LLM-agent runtime — provider abstraction, tool-call loop, structured-output validation, and lex-spec permission gating."
 
 [dependencies]
 "lex-schema" = "0.9.2"
 "lex-trail"  = "0.1.0"
+"lex-spec"   = "0.1.0"
