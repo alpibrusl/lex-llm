@@ -3,17 +3,19 @@
 # run_loop drives the stream → collect → dispatch → continue cycle:
 #
 #   1. Prepend agent.goal as the system message.
-#   2. Call provider.chat; collect Deltas eagerly (one HTTP round-trip).
-#   3. Assemble a CollectedResponse from the Deltas.
-#   4. If finish_reason = "tool_calls":
+#   2. Derive bindings from the last UserMsg in the conversation.
+#   3. Filter agent.tools through spec preconditions (filter_available).
+#   4. Call provider.chat with the filtered tool list; collect Deltas.
+#   5. Assemble a CollectedResponse from the Deltas.
+#   6. If finish_reason = "tool_calls":
 #        a. Validate args via lex-schema; invalid → Err → ToolMsg so
 #           the model can self-correct on the next turn.
-#        b. Execute valid tools; emit StepToolExec + StepToolResult.
+#        b. Execute valid tools against the full agent.tools list so
+#           model references to prior-turn tools are not broken.
 #        c. Append AssistantMsg + ToolMsg results; recurse within budget.
-#   5. Otherwise emit StepDone.
+#   7. Otherwise emit StepDone.
 #
 # run_loop_traced: same loop with lex-trail events at each step.
-# Inter-turn per-token streaming will improve once lex-lang#487 closes.
 
 import "./message"  as msg
 import "./delta"    as d
@@ -22,6 +24,8 @@ import "./provider" as prov
 
 import "lex-schema/json_value" as jv
 import "lex-schema/error"      as e
+
+import "lex-spec/spec" as sp
 
 import "lex-trail/log"   as trail
 import "lex-trail/kinds" as kinds
@@ -115,8 +119,10 @@ fn run_steps(
   if budget == 0 {
     [d.StepDone(msg.AssistantMsg("[max_steps reached]", []))]
   } else {
-    let messages   := list.concat([msg.SystemMsg(agent.goal)], conv)
-    let raw_deltas := iter.to_list(agent.provider.chat(agent.model, messages, agent.tools))
+    let messages    := list.concat([msg.SystemMsg(agent.goal)], conv)
+    let bindings    := bindings_from_conv(conv)
+    let avail_tools := t.filter_available(agent.tools, bindings)
+    let raw_deltas  := iter.to_list(agent.provider.chat(agent.model, messages, avail_tools))
     let delta_steps := list.map(raw_deltas, fn (dl :: d.Delta) -> d.Step {
       d.StepDelta(dl)
     })
@@ -157,7 +163,9 @@ fn run_steps_traced(
     [d.StepDone(msg.AssistantMsg("[max_steps reached]", []))]
   } else {
     let messages    := list.concat([msg.SystemMsg(agent.goal)], conv)
-    let raw_deltas  := iter.to_list(agent.provider.chat(agent.model, messages, agent.tools))
+    let bindings    := bindings_from_conv(conv)
+    let avail_tools := t.filter_available(agent.tools, bindings)
+    let raw_deltas  := iter.to_list(agent.provider.chat(agent.model, messages, avail_tools))
     let delta_steps := list.map(raw_deltas, fn (dl :: d.Delta) -> d.Step { d.StepDelta(dl) })
     let response    := collect_response(raw_deltas)
     let step_payload := llm_step_json(agent.model, list.len(response.tool_calls))
@@ -184,6 +192,25 @@ fn run_steps_traced(
           [d.StepDone(msg.AssistantMsg(response.content, []))]),
     }
   }
+}
+
+# ---- Spec bindings -----------------------------------------------
+#
+# Build the bindings list passed to filter_available on each turn.
+# v0.1 exposes a single `user_input` binding with the text of the
+# last UserMsg in the conversation. Extend as tools need richer context.
+
+fn last_user_content(conv :: List[msg.Message]) -> Str {
+  list.fold(conv, "", fn (acc :: Str, m :: msg.Message) -> Str {
+    match m {
+      msg.UserMsg(text) => text,
+      _                 => acc,
+    }
+  })
+}
+
+fn bindings_from_conv(conv :: List[msg.Message]) -> List[(Str, sp.SpecValue)] {
+  [("user_input", VStr(last_user_content(conv)))]
 }
 
 # ---- Delta → CollectedResponse -----------------------------------
@@ -239,6 +266,10 @@ fn append_arg_chunk(
 }
 
 # ---- Tool dispatch -----------------------------------------------
+#
+# Dispatch always uses the full agent.tools list — not avail_tools —
+# so models that reference a tool name from a prior turn (when it was
+# available) still get a coherent error rather than "unknown tool".
 
 fn dispatch_calls(
   tools :: List[t.Tool],
