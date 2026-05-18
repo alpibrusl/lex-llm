@@ -15,16 +15,30 @@ import "./tool"    as t
 
 # Identifies a model at a specific provider.
 type ModelRef = {
-  provider :: Str,   # "openai" | "anthropic" | "google" | "ollama"
-  model    :: Str,   # "gpt-4o" | "claude-opus-4-7" | ...
+  provider :: Str,   # "openai" | "anthropic" | "google" | "ollama" | "mistral"
+  model    :: Str,   # "gpt-4o" | "claude-opus-4-7" | "mistral-large-latest" | ...
 }
 
+# OpenAI
 fn gpt4o()          -> ModelRef { { provider: "openai",    model: "gpt-4o" } }
 fn gpt4o_mini()     -> ModelRef { { provider: "openai",    model: "gpt-4o-mini" } }
+
+# Anthropic
 fn claude_opus()    -> ModelRef { { provider: "anthropic", model: "claude-opus-4-7" } }
 fn claude_sonnet()  -> ModelRef { { provider: "anthropic", model: "claude-sonnet-4-6" } }
+fn claude_haiku()   -> ModelRef { { provider: "anthropic", model: "claude-haiku-4-5-20251001" } }
+
+# Google
 fn gemini_flash()   -> ModelRef { { provider: "google",    model: "gemini-2.0-flash" } }
 fn gemini_pro()     -> ModelRef { { provider: "google",    model: "gemini-2.5-pro" } }
+
+# Mistral
+fn mistral_large()  -> ModelRef { { provider: "mistral",   model: "mistral-large-latest" } }
+fn mistral_small()  -> ModelRef { { provider: "mistral",   model: "mistral-small-latest" } }
+fn codestral()      -> ModelRef { { provider: "mistral",   model: "codestral-latest" } }
+fn mistral_nemo()   -> ModelRef { { provider: "mistral",   model: "open-mistral-nemo" } }
+
+# Ollama (local)
 fn ollama(m :: Str) -> ModelRef { { provider: "ollama",    model: m } }
 
 # The provider interface.
