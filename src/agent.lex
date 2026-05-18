@@ -16,6 +16,7 @@
 #   7. Otherwise emit StepDone.
 #
 # run_loop_traced: same loop with lex-trail events at each step.
+# with_permission_gate: filter tools via lex-spec Spec at construction time.
 
 import "./message"  as msg
 import "./delta"    as d
@@ -26,6 +27,7 @@ import "lex-schema/json_value" as jv
 import "lex-schema/error"      as e
 
 import "lex-spec/spec" as sp
+import "lex-spec/eval" as ev
 
 import "lex-trail/log"   as trail
 import "lex-trail/kinds" as kinds
@@ -63,6 +65,30 @@ fn default_options() -> AgentOptions
   }
 {
   { temperature: Some(0.7), top_p: None, max_steps: Some(20), max_tokens: Some(4096) }
+}
+
+# ---- Permission gating -------------------------------------------
+#
+# Filter an AgentDef's tool list to only tools allowed by a lex-spec Spec.
+# The spec is evaluated with a single bound variable "tool" (the tool name).
+# Deny or Inconclusive both remove the tool from the agent's visible set,
+# so the model never sees forbidden tool names in its prompt.
+#
+# Apply at construction time for maximum isolation:
+#
+#   let gated := with_permission_gate(base_agent, rules.explore_permission())
+#
+fn with_permission_gate(agent :: AgentDef, spec :: sp.Spec) -> AgentDef {
+  let allowed := list.filter(agent.tools, fn (tool :: t.Tool) -> Bool {
+    let bindings := [("tool", sp.VStr(tool.name))]
+    sp.verdict_is_allow(ev.eval(spec, bindings))
+  })
+  { name:     agent.name,
+    goal:     agent.goal,
+    model:    agent.model,
+    provider: agent.provider,
+    tools:    allowed,
+    options:  agent.options }
 }
 
 # ---- Internal collected-response type ----------------------------
