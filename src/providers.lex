@@ -41,9 +41,31 @@ fn mistral() -> prov.Provider {
 }
 
 fn ollama_local() -> prov.Provider {
-  olla.make_provider(olla.default_config(""))
+  olla.make_provider(olla.default_config())
 }
 
 fn ollama_at(host :: Str) -> prov.Provider {
   olla.make_provider({ base_url: host })
+}
+
+# vLLM — OpenAI-compatible, no key required by default.
+# Model name must match the model loaded in the vLLM server.
+# Override via VLLM_BASE_URL env var for remote deployments.
+fn vllm_model() -> Str {
+  match env.get("VLLM_MODEL") {
+    None    => "mistralai/Mistral-7B-Instruct-v0.3",
+    Some(m) => m,
+  }
+}
+
+fn vllm_local() -> prov.Provider {
+  let base_url := match env.get("VLLM_BASE_URL") {
+    None    => "http://localhost:8000/v1/chat/completions",
+    Some(u) => u,
+  }
+  oai.make_provider({ api_key: "", base_url: base_url })
+}
+
+fn vllm_at(host :: Str) -> prov.Provider {
+  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions") })
 }
