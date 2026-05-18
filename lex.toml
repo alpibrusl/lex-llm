@@ -5,4 +5,5 @@ description = "Pure-Lex LLM-agent runtime — provider abstraction, tool-call lo
 
 [dependencies]
 "lex-schema" = "0.9.2"
+"lex-spec"   = "0.1.0"
 "lex-trail"  = "0.1.0"

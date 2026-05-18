@@ -9,29 +9,57 @@
 # HTTP calls, filesystem I/O, or shell execution without widening the
 # agent-loop signature further. Pure tools satisfy this constraint
 # structurally (unused declared effects are ignored by the type checker).
+#
+# Spec gating: the optional `precondition` field holds a lex-spec `Spec`
+# value. `filter_available(tools, bindings)` evaluates each tool's spec
+# and drops those that Deny or are Inconclusive, so only contextually
+# permitted tools are offered to the model on each turn.
 
 import "lex-schema/schema"     as s
 import "lex-schema/json_value" as jv
 import "lex-schema/error"      as e
 
+import "lex-spec/spec" as sp
+import "lex-spec/eval" as ev
+
 import "std.list" as list
 import "std.str"  as str
 
 type Tool = {
-  name        :: Str,
-  description :: Str,
-  params      :: s.ModelSchema,
-  execute     :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors],
+  name         :: Str,
+  description  :: Str,
+  params       :: s.ModelSchema,
+  execute      :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors],
+  precondition :: Option[sp.Spec],
 }
 
-# Canonical constructor.
+# Canonical constructor — no precondition (always available).
 fn define(
   name        :: Str,
   description :: Str,
   params      :: s.ModelSchema,
   execute     :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors]
 ) -> Tool {
-  { name: name, description: description, params: params, execute: execute }
+  { name: name, description: description, params: params,
+    execute: execute, precondition: None }
+}
+
+# Constructor with a spec precondition attached.
+fn define_gated(
+  name        :: Str,
+  description :: Str,
+  params      :: s.ModelSchema,
+  execute     :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors],
+  spec        :: sp.Spec
+) -> Tool {
+  { name: name, description: description, params: params,
+    execute: execute, precondition: Some(spec) }
+}
+
+# Attach or replace the precondition on an existing tool.
+fn with_precondition(tool :: Tool, spec :: sp.Spec) -> Tool {
+  { name: tool.name, description: tool.description, params: tool.params,
+    execute: tool.execute, precondition: Some(spec) }
 }
 
 # Validate args through the tool's param schema then dispatch.
@@ -49,6 +77,30 @@ fn find_by_name(tools :: List[Tool], name :: Str) -> Option[Tool] {
     match acc {
       Some(_) => acc,
       None    => if tool.name == name { Some(tool) } else { None },
+    }
+  })
+}
+
+# Evaluate a tool's precondition against the supplied bindings.
+# A tool with no precondition is always available.
+fn is_available(tool :: Tool, bindings :: List[(Str, sp.SpecValue)]) -> Bool {
+  match tool.precondition {
+    None       => true,
+    Some(spec) => match ev.eval(spec, bindings) {
+      Allow => true,
+      _     => false,
+    },
+  }
+}
+
+# Return only the tools whose precondition evaluates to Allow given
+# the current bindings. Tools with no precondition are always kept.
+fn filter_available(tools :: List[Tool], bindings :: List[(Str, sp.SpecValue)]) -> List[Tool] {
+  list.fold(tools, [], fn (acc :: List[Tool], tool :: Tool) -> List[Tool] {
+    if is_available(tool, bindings) {
+      list.concat(acc, [tool])
+    } else {
+      acc
     }
   })
 }
