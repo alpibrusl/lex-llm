@@ -19,8 +19,8 @@ import "std.str"  as str
 import "std.iter" as iter
 import "std.map"  as map
 
-let default_base_url  := "https://api.anthropic.com/v1/messages"
-let api_version       := "2023-06-01"
+fn default_base_url() -> Str { "https://api.anthropic.com/v1/messages" }
+fn api_version() -> Str { "2023-06-01" }
 
 type AnthropicConfig = {
   api_key  :: Str,
@@ -28,7 +28,7 @@ type AnthropicConfig = {
 }
 
 fn default_config(api_key :: Str) -> AnthropicConfig {
-  { api_key: api_key, base_url: default_base_url }
+  { api_key: api_key, base_url: default_base_url() }
 }
 
 fn make_provider(config :: AnthropicConfig) -> prov.Provider {
@@ -50,7 +50,9 @@ fn chat(
   messages :: List[msg.Message],
   tools    :: List[t.Tool]
 ) -> [net, llm] Iter[d.Delta] {
-  let (sys, user_msgs) := split_system(messages)
+  let _sm       := split_system(messages)
+  let sys       := match _sm { (s, _) => s }
+  let user_msgs := match _sm { (_, ms) => ms }
   let body    := build_request(model, sys, user_msgs, tools)
   let headers := build_headers(config.api_key)
   let lines   := match http.stream_lines(config.base_url, headers, body) {
@@ -137,7 +139,7 @@ fn encode_tool_use_block(call :: msg.ToolCall) -> jv.Json {
 fn build_headers(api_key :: Str) -> Map[Str, Str] {
   map.from_list([
     ("x-api-key",         api_key),
-    ("anthropic-version", api_version),
+    ("anthropic-version", api_version()),
     ("content-type",      "application/json"),
     ("accept",            "text/event-stream"),
   ])
@@ -160,7 +162,7 @@ type ParseState = {
 
 fn parse_stream(payloads :: List[Str]) -> Iter[d.Delta] {
   let init := { block_type: "", tool_id: "", tool_name: "" }
-  let (_, deltas) := list.fold(payloads, (init, []),
+  let _fd := list.fold(payloads, (init, []),
     fn (
       acc     :: (ParseState, List[d.Delta]),
       payload :: Str
@@ -170,11 +172,14 @@ fn parse_stream(payloads :: List[Str]) -> Iter[d.Delta] {
       match jv.parse_into_errors(payload) {
         Err(_) => acc,
         Ok(j)  => {
-          let (new_state, new_deltas) := handle_event(state, j)
+          let _he        := handle_event(state, j)
+          let new_state  := match _he { (s, _) => s }
+          let new_deltas := match _he { (_, ds) => ds }
           (new_state, list.concat(so_far, new_deltas))
         },
       }
     })
+  let deltas := match _fd { (_, ds) => ds }
   iter.from_list(deltas)
 }
 

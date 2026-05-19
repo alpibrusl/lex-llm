@@ -64,7 +64,9 @@ fn build_request(
   messages :: List[msg.Message],
   tools    :: List[t.Tool]
 ) -> Str {
-  let (sys_opt, contents) := encode_messages(messages)
+  let _em      := encode_messages(messages)
+  let sys_opt  := match _em { (s, _) => s }
+  let contents := match _em { (_, c) => c }
   let base := [("contents", JList(contents))]
   let with_sys := match sys_opt {
     None => base,
@@ -135,10 +137,10 @@ fn parse_stream(lines :: List[Str]) -> Iter[d.Delta] {
     fn (acc :: List[d.Delta], line :: Str) -> List[d.Delta] {
       let t := str.trim(line)
       if str.is_empty(t) { acc }
-      else match jv.parse_into_errors(t) {
+      else { match jv.parse_into_errors(t) {
         Err(_) => acc,
         Ok(j)  => list.concat(acc, parse_chunk(j)),
-      }
+      } }
     })
   iter.from_list(deltas)
 }

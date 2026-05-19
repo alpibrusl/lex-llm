@@ -10,7 +10,7 @@ import "./openai"    as openai
 
 import "std.str" as str
 
-let default_base_url := "https://api.mistral.ai/v1/chat/completions"
+fn default_base_url() -> Str { "https://api.mistral.ai/v1/chat/completions" }
 
 type MistralConfig = {
   api_key  :: Str,

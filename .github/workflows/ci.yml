@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lex toolchain
+        run: |
+          set -euxo pipefail
+          LEX_VERSION="0.9.5"
+          curl -fsSL -o /tmp/lex.tgz \
+            "https://github.com/alpibrusl/lex-lang/releases/download/v${LEX_VERSION}/lex-v${LEX_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xzf /tmp/lex.tgz -C /tmp/
+          echo "/tmp/lex-v${LEX_VERSION}-x86_64-unknown-linux-gnu" >> "$GITHUB_PATH"
+          "/tmp/lex-v${LEX_VERSION}-x86_64-unknown-linux-gnu/lex" --version
+
+      - name: Install package dependencies
+        run: lex pkg install
+
+      - name: Type-check src/
+        run: |
+          set -e
+          fail=0
+          for f in src/*.lex; do
+            if ! lex check "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::lex check failed"
+              lex check "$f" 2>&1 | head -3
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Format check
+        run: lex fmt --check src/ tests/
+
+      - name: Test
+        run: lex test --allow-effects io,time,crypto,random,sql,fs_read,fs_write,net,concurrent tests/

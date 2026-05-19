@@ -20,7 +20,7 @@ import "std.list" as list
 import "std.str"  as str
 import "std.iter" as iter
 
-let default_base_url := "http://localhost:11434/api/chat"
+fn default_base_url() -> Str { "http://localhost:11434/api/chat" }
 
 type OllamaConfig = { base_url :: Str }
 
@@ -127,10 +127,10 @@ fn parse_stream(lines :: List[Str]) -> Iter[d.Delta] {
     fn (acc :: List[d.Delta], line :: Str) -> List[d.Delta] {
       let t := str.trim(line)
       if str.is_empty(t) { acc }
-      else match jv.parse_into_errors(t) {
+      else { match jv.parse_into_errors(t) {
         Err(_) => acc,
         Ok(j)  => list.concat(acc, parse_chunk(j)),
-      }
+      } }
     })
   iter.from_list(deltas)
 }

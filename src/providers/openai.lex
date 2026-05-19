@@ -20,7 +20,7 @@ import "std.list" as list
 import "std.str"  as str
 import "std.iter" as iter
 
-let default_base_url := "https://api.openai.com/v1/chat/completions"
+fn default_base_url() -> Str { "https://api.openai.com/v1/chat/completions" }
 
 type OpenAIConfig = {
   api_key  :: Str,
