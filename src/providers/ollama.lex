@@ -28,7 +28,7 @@ fn default_config() -> OllamaConfig
   examples {
     default_config() => { base_url: "http://localhost:11434/api/chat" },
   }
-{ { base_url: default_base_url } }
+{ { base_url: default_base_url() } }
 
 fn make_provider(config :: OllamaConfig) -> prov.Provider {
   {

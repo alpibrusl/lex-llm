@@ -18,7 +18,7 @@ type MistralConfig = {
 }
 
 fn default_config(api_key :: Str) -> MistralConfig {
-  { api_key: api_key, base_url: default_base_url }
+  { api_key: api_key, base_url: default_base_url() }
 }
 
 fn make_provider(config :: MistralConfig) -> prov.Provider {

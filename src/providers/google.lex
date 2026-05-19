@@ -21,6 +21,8 @@ import "std.iter" as iter
 
 type GoogleConfig = { api_key :: Str }
 
+fn default_config(api_key :: Str) -> GoogleConfig { { api_key: api_key } }
+
 fn gemini_url(model :: Str, api_key :: Str) -> Str {
   str.concat(
     "https://generativelanguage.googleapis.com/v1beta/models/",

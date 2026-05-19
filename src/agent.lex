@@ -236,7 +236,7 @@ fn last_user_content(conv :: List[msg.Message]) -> Str {
 }
 
 fn bindings_from_conv(conv :: List[msg.Message]) -> List[(Str, sp.SpecValue)] {
-  [("user_input", VStr(last_user_content(conv)))]
+  [("user_input", sp.VStr(last_user_content(conv)))]
 }
 
 # ---- Delta → CollectedResponse -----------------------------------
@@ -261,9 +261,18 @@ fn collect_response(deltas :: List[d.Delta]) -> CollectedResponse {
           finish_reason: acc.finish_reason,
         },
         d.FinishDelta(reason) => {
-          content:       acc.content,
-          tool_calls:    list.reverse(acc.tool_calls),
-          finish_reason: reason,
+          let calls := list.reverse(acc.tool_calls)
+          # Ollama sends tool_calls in a done=false chunk, then a bare done=true
+          # chunk with done_reason="stop". Override so dispatch still fires.
+          let actual_reason :=
+            if reason == "stop" {
+              if list.is_empty(calls) { "stop" } else { "tool_calls" }
+            } else { reason }
+          {
+            content:       acc.content,
+            tool_calls:    calls,
+            finish_reason: actual_reason,
+          }
         },
       }
     })

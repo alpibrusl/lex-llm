@@ -17,26 +17,26 @@ import "./providers/mistral"   as mist
 
 import "std.env" as env
 
-fn get_key(var_name :: Str) -> Str {
+fn get_key(var_name :: Str) -> [env] Str {
   match env.get(var_name) {
     None    => "",
     Some(k) => k,
   }
 }
 
-fn anthropic() -> prov.Provider {
+fn anthropic() -> [env] prov.Provider {
   anth.make_provider(anth.default_config(get_key("ANTHROPIC_API_KEY")))
 }
 
-fn openai() -> prov.Provider {
+fn openai() -> [env] prov.Provider {
   oai.make_provider(oai.default_config(get_key("OPENAI_API_KEY")))
 }
 
-fn google() -> prov.Provider {
+fn google() -> [env] prov.Provider {
   goog.make_provider(goog.default_config(get_key("GOOGLE_API_KEY")))
 }
 
-fn mistral() -> prov.Provider {
+fn mistral() -> [env] prov.Provider {
   mist.make_provider(mist.default_config(get_key("MISTRAL_API_KEY")))
 }
 
@@ -51,14 +51,14 @@ fn ollama_at(host :: Str) -> prov.Provider {
 # vLLM — OpenAI-compatible, no key required by default.
 # Model name must match the model loaded in the vLLM server.
 # Override via VLLM_BASE_URL env var for remote deployments.
-fn vllm_model() -> Str {
+fn vllm_model() -> [env] Str {
   match env.get("VLLM_MODEL") {
     None    => "mistralai/Mistral-7B-Instruct-v0.3",
     Some(m) => m,
   }
 }
 
-fn vllm_local() -> prov.Provider {
+fn vllm_local() -> [env] prov.Provider {
   let base_url := match env.get("VLLM_BASE_URL") {
     None    => "http://localhost:8000/v1/chat/completions",
     Some(u) => u,

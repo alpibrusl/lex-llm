@@ -28,7 +28,7 @@ type OpenAIConfig = {
 }
 
 fn default_config(api_key :: Str) -> OpenAIConfig {
-  { api_key: api_key, base_url: default_base_url }
+  { api_key: api_key, base_url: default_base_url() }
 }
 
 fn make_provider(config :: OpenAIConfig) -> prov.Provider {
@@ -59,10 +59,7 @@ fn chat(
   let payloads := sse.data_payloads(lines)
   let deltas   := list.fold(payloads, [],
     fn (acc :: List[d.Delta], payload :: Str) -> List[d.Delta] {
-      match parse_chunk(payload) {
-        None    => acc,
-        Some(dl) => list.concat(acc, [dl]),
-      }
+      list.concat(acc, parse_chunk(payload))
     })
   iter.from_list(deltas)
 }
@@ -129,71 +126,80 @@ fn encode_tool_call(call :: msg.ToolCall) -> jv.Json {
 #                  "function": {"name":"...", "arguments":""}}] } }] }
 #   finish:     { "choices": [{ "delta": {}, "finish_reason": "stop" }] }
 
-fn parse_chunk(payload :: Str) -> Option[d.Delta] {
+fn parse_chunk(payload :: Str) -> List[d.Delta] {
   match jv.parse_into_errors(payload) {
-    Err(_) => None,
+    Err(_) => [],
     Ok(j)  => parse_openai_delta(j),
   }
 }
 
-fn parse_openai_delta(j :: jv.Json) -> Option[d.Delta] {
+fn parse_openai_delta(j :: jv.Json) -> List[d.Delta] {
   match jv.get_field(j, "choices") {
-    None           => None,
+    None            => [],
     Some(JList(xs)) => match first(xs) {
-      None         => None,
+      None         => [],
       Some(choice) => parse_choice(choice),
     },
-    _ => None,
+    _ => [],
   }
 }
 
-fn parse_choice(choice :: jv.Json) -> Option[d.Delta] {
+# When finish_reason and tool_calls appear in the same chunk (Mistral's format),
+# emit the tool call deltas first, then FinishDelta — so nothing is dropped.
+fn parse_choice(choice :: jv.Json) -> List[d.Delta] {
   let finish := match jv.get_field(choice, "finish_reason") {
     Some(JStr(r)) => if r == "null" { None } else { Some(r) },
     _             => None,
   }
+  let delta_deltas := match jv.get_field(choice, "delta") {
+    None      => [],
+    Some(dj)  => parse_delta_obj(dj),
+  }
   match finish {
-    Some(r) => Some(d.FinishDelta(r)),
-    None    =>
-      match jv.get_field(choice, "delta") {
-        None    => None,
-        Some(dj) => parse_delta_obj(dj),
-      },
+    None    => delta_deltas,
+    Some(r) => list.concat(delta_deltas, [d.FinishDelta(r)]),
   }
 }
 
-fn parse_delta_obj(dj :: jv.Json) -> Option[d.Delta] {
+fn parse_delta_obj(dj :: jv.Json) -> List[d.Delta] {
   match jv.get_field(dj, "content") {
     Some(JStr(s)) =>
-      if str.is_empty(s) { None } else { Some(d.TextChunk(s)) },
+      if str.is_empty(s) { [] } else { [d.TextChunk(s)] },
     _ =>
       match jv.get_field(dj, "tool_calls") {
         Some(JList(calls)) => parse_tool_call_chunk(calls),
-        _                  => None,
+        _                  => [],
       },
   }
 }
 
-fn parse_tool_call_chunk(calls :: List[jv.Json]) -> Option[d.Delta] {
+# When a single chunk carries id + name + args (Mistral sends complete tool calls
+# in one chunk), emit ToolCallBegin followed immediately by ToolArgChunk.
+fn parse_tool_call_chunk(calls :: List[jv.Json]) -> List[d.Delta] {
   match first(calls) {
-    None      => None,
+    None      => [],
     Some(cj) => {
       let fn_opt   := jv.get_field(cj, "function")
       let id_opt   := jv.get_field(cj, "id")
       match fn_opt {
-        None     => None,
+        None     => [],
         Some(fj) => {
           let name_opt := jv.get_field(fj, "name")
           let args_opt := jv.get_field(fj, "arguments")
           match (id_opt, name_opt) {
             (Some(JStr(id)), Some(JStr(name))) =>
-              Some(d.ToolCallBegin(id, name)),
+              match args_opt {
+                Some(JStr(args)) =>
+                  if str.is_empty(args) { [d.ToolCallBegin(id, name)] }
+                  else { [d.ToolCallBegin(id, name), d.ToolArgChunk(id, args)] },
+                _ => [d.ToolCallBegin(id, name)],
+              },
             _ =>
               match (str_field(cj, "id"), args_opt) {
                 (id_str, Some(JStr(args)))
-                  => if str.is_empty(id_str) { None }
-                     else { Some(d.ToolArgChunk(id_str, args)) },
-                _ => None,
+                  => if str.is_empty(id_str) { [] }
+                     else { [d.ToolArgChunk(id_str, args)] },
+                _ => [],
               },
           }
         },
