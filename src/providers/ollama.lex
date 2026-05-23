@@ -66,10 +66,15 @@ fn build_request(
   messages :: List[msg.Message],
   tools    :: List[t.Tool]
 ) -> Str {
+  # qwen3 models produce XML tool calls in the content field when streaming
+  # with a system prompt (their native agentic format). Non-streaming always
+  # returns proper structured tool_calls JSON. opencode solves this by using
+  # DashScope's API instead of Ollama; locally we just disable streaming.
+  let streaming := if str.starts_with(model.model, "qwen3") { false } else { true }
   let base := [
     ("model",    JStr(model.model)),
     ("messages", JList(list.map(messages, encode_message))),
-    ("stream",   JBool(true)),
+    ("stream",   JBool(streaming)),
   ]
   let with_tools :=
     if list.is_empty(tools) { base }
@@ -123,7 +128,8 @@ fn encode_tool_call(call :: msg.ToolCall) -> jv.Json {
 #     "done": true }
 
 fn parse_stream(lines :: List[Str]) -> Iter[d.Delta] {
-  let deltas := list.fold(lines, [],
+  # Try streaming NDJSON: one complete JSON object per line.
+  let stream_deltas := list.fold(lines, [],
     fn (acc :: List[d.Delta], line :: Str) -> List[d.Delta] {
       let t := str.trim(line)
       if str.is_empty(t) { acc }
@@ -132,6 +138,18 @@ fn parse_stream(lines :: List[Str]) -> Iter[d.Delta] {
         Ok(j)  => list.concat(acc, parse_chunk(j)),
       } }
     })
+  # If streaming parse found nothing, try joining all lines as a single JSON
+  # object. Ollama non-streaming responses (stream:false) are pretty-printed
+  # multi-line JSON that cannot be parsed line-by-line.
+  let deltas :=
+    if list.is_empty(stream_deltas) {
+      let full := str.trim(str.join(lines, ""))
+      if str.is_empty(full) { [] }
+      else { match jv.parse_into_errors(full) {
+        Err(_) => [],
+        Ok(j)  => parse_chunk(j),
+      } }
+    } else { stream_deltas }
   iter.from_list(deltas)
 }
 
@@ -156,15 +174,127 @@ fn parse_chunk(j :: jv.Json) -> List[d.Delta] {
 }
 
 fn parse_assistant_message(mj :: jv.Json) -> List[d.Delta] {
-  let text_deltas := match jv.get_field(mj, "content") {
-    Some(JStr(s)) => if str.is_empty(s) { [] } else { [d.TextChunk(s)] },
-    _             => [],
+  let content := match jv.get_field(mj, "content") {
+    Some(JStr(s)) => s, _ => ""
   }
+  # Prefer structured tool_calls; fall back to qwen3 XML format in content.
   let call_deltas := match jv.get_field(mj, "tool_calls") {
     Some(JList(calls)) => parse_tool_calls(calls),
-    _                  => [],
+    _ => parse_xml_tool_calls(content),
   }
+  # Only emit TextChunk when content is genuine text, not XML tool markup.
+  let trimmed_content := str.trim(content)
+  let is_xml :=
+    if str.starts_with(trimmed_content, "<function=") { true }
+    else { str.starts_with(trimmed_content, "<tool_call>") }
+  let text_deltas :=
+    if str.is_empty(content) { [] }
+    else { if is_xml { [] } else { [d.TextChunk(content)] } }
   list.concat(text_deltas, call_deltas)
+}
+
+# ---- qwen3 XML tool call parser ------------------------------------
+#
+# qwen3-coder emits its native agentic format when served locally via
+# Ollama (both streaming and non-streaming with a system prompt):
+#
+#   <tool_call>
+#   <function=write>
+#   <parameter=path>
+#   hello.lex
+#   </parameter>
+#   <parameter=content>
+#   fn hello() -> Str { "hi" }
+#   </parameter>
+#   </function>
+#   </tool_call>
+#
+# We parse this into the same TCBegin + TCArgs deltas produced by the
+# structured tool_calls path, so the rest of the pipeline is unchanged.
+
+type XmlPState =
+    XScan(Str)             # dummy Str; unit variants not supported
+  | XInParam(Str, Str)    # (param_name, accumulated_value_so_far)
+
+fn parse_xml_tool_calls(content :: Str) -> List[d.Delta] {
+  # Quick exit: no XML tool markers present.
+  let func_parts := str.split(content, "<function=")
+  if list.len(func_parts) <= 1 { [] }
+  else {
+    match list.fold(func_parts, (true, []),
+      fn (acc :: (Bool, List[d.Delta]), part :: Str) -> (Bool, List[d.Delta]) {
+        let skip   := match acc { (b, _) => b }
+        let deltas := match acc { (_, ds) => ds }
+        if skip { (false, deltas) }   # first element is preamble before any <function=
+        else {
+          # part = "write>\n<parameter=path>\nfib.lex\n</parameter>..."
+          let name := str.trim(match list.head(str.split(part, ">")) {
+            Some(n) => n, None => ""
+          })
+          if str.is_empty(name) { (false, deltas) }
+          else {
+            let id   := str.concat("call_", name)
+            let args := xml_params_to_json(part)
+            (false, list.concat(deltas, [d.ToolCallBegin(id, name), d.ToolArgChunk(id, args)]))
+          }
+        }
+      }) { (_, ds) => ds }
+  }
+}
+
+fn xml_params_to_json(func_body :: Str) -> Str {
+  # Walk lines with a state machine: scan for <parameter=name>, collect
+  # value lines until </parameter>, then repeat.
+  let lines := str.split(func_body, "\n")
+  let result := list.fold(lines, (XScan(""), []),
+    fn (acc :: (XmlPState, List[(Str, Str)]), line :: Str)
+         -> (XmlPState, List[(Str, Str)]) {
+      let state  := match acc { (s, _) => s }
+      let params := match acc { (_, p) => p }
+      let t      := str.trim(line)
+      match state {
+        XScan(_) =>
+          if str.starts_with(t, "<parameter=") {
+            # "<parameter=path>" → name = "path"
+            let after := str_skip_prefix(t, "<parameter=")
+            let name  := str.trim(match list.head(str.split(after, ">")) {
+              Some(n) => n, None => after
+            })
+            if str.is_empty(name) { acc } else { (XInParam(name, ""), params) }
+          } else { acc },
+        XInParam(name, value) =>
+          if str.starts_with(t, "</parameter>") {
+            (XScan(""), list.concat(params, [(name, str.trim(value))]))
+          } else {
+            let sep     := if str.is_empty(value) { "" } else { "\n" }
+            let new_val := str.concat(value, str.concat(sep, line))
+            (XInParam(name, new_val), params)
+          },
+      }
+    })
+  let params := match result { (_, p) => p }
+  let fields := list.map(params, fn (kv :: (Str, Str)) -> Str {
+    let k := match kv { (k, _) => k }
+    let v := match kv { (_, v) => v }
+    str.concat(str.concat("\"", str.concat(k, "\": ")), jv.stringify(JStr(v)))
+  })
+  str.join(["{", str.join(fields, ", "), "}"], "")
+}
+
+# Return everything in `s` after the first occurrence of `prefix`.
+# Returns `s` unchanged if `prefix` is not found.
+fn str_skip_prefix(s :: Str, prefix :: Str) -> Str {
+  let parts := str.split(s, prefix)
+  match list.fold(parts, (true, ""),
+    fn (acc :: (Bool, Str), part :: Str) -> (Bool, Str) {
+      let first  := match acc { (b, _) => b }
+      let so_far := match acc { (_, r) => r }
+      if first { (false, "") }
+      else {
+        (false, if str.is_empty(so_far) { part }
+                else { str.join([so_far, part], prefix) })
+      }
+    }) { (_, r) => r }
 }
 
 fn parse_tool_calls(calls :: List[jv.Json]) -> List[d.Delta] {

@@ -44,6 +44,13 @@ fn ollama_local() -> prov.Provider {
   olla.make_provider(olla.default_config())
 }
 
+fn ollama_model() -> [env] Str {
+  match env.get("OLLAMA_MODEL") {
+    None    => "gemma4:latest",
+    Some(m) => m,
+  }
+}
+
 fn ollama_at(host :: Str) -> prov.Provider {
   olla.make_provider({ base_url: host })
 }

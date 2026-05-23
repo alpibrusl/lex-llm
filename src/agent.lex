@@ -165,8 +165,11 @@ fn run_steps(
               args: parse_args_or_empty(c.args_raw) }
           })
         )
-        let new_conv :=
-          list.concat(conv, list.concat([assistant_msg], tool_messages))
+        let base_conv  := list.concat(conv, list.concat([assistant_msg], tool_messages))
+        let new_conv   :=
+          if any_dispatch_failed(dispatches) {
+            list.concat(base_conv, [msg.UserMsg("One or more tools returned errors. Read the error messages above, fix the code, and try again.")])
+          } else { base_conv }
         list.concat(delta_steps,
           list.concat(exec_steps,
             run_steps(agent, new_conv, budget - 1)))
@@ -176,6 +179,12 @@ fn run_steps(
           [d.StepDone(msg.AssistantMsg(response.content, []))]),
     }
   }
+}
+
+fn any_dispatch_failed(dispatches :: List[Dispatch]) -> Bool {
+  list.fold(dispatches, false, fn (acc :: Bool, disp :: Dispatch) -> Bool {
+    if acc { true } else { if disp.success { false } else { true } }
+  })
 }
 
 fn run_steps_traced(
@@ -208,7 +217,11 @@ fn run_steps_traced(
             { id: c.id, name: c.name, args: parse_args_or_empty(c.args_raw) }
           })
         )
-        let new_conv := list.concat(conv, list.concat([assistant_msg], tool_messages))
+        let base_conv  := list.concat(conv, list.concat([assistant_msg], tool_messages))
+        let new_conv   :=
+          if any_dispatch_failed(dispatches) {
+            list.concat(base_conv, [msg.UserMsg("One or more tools returned errors. Read the error messages above, fix the code, and try again.")])
+          } else { base_conv }
         list.concat(delta_steps,
           list.concat(exec_steps,
             run_steps_traced(agent, new_conv, budget - 1, log, step_id)))
