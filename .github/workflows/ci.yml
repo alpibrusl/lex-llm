@@ -28,11 +28,6 @@ jobs:
           repository: alpibrusl/lex-trail
           path: lex-trail
 
-      - uses: actions/checkout@v4
-        with:
-          repository: alpibrusl/lex-log
-          path: lex-log
-
       - name: Install Lex toolchain
         run: |
           set -euxo pipefail
