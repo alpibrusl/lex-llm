@@ -10,6 +10,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: lex-llm
+
+      - uses: actions/checkout@v4
+        with:
+          repository: alpibrusl/lex-schema
+          path: lex-schema
+
+      - uses: actions/checkout@v4
+        with:
+          repository: alpibrusl/lex-spec
+          path: lex-spec
+
+      - uses: actions/checkout@v4
+        with:
+          repository: alpibrusl/lex-trail
+          path: lex-trail
+
+      - uses: actions/checkout@v4
+        with:
+          repository: alpibrusl/lex-log
+          path: lex-log
 
       - name: Install Lex toolchain
         run: |
@@ -23,6 +45,7 @@ jobs:
 
       - name: Install package dependencies
         run: lex pkg install
+        working-directory: lex-llm
 
       - name: Type-check src/
         run: |
@@ -36,9 +59,12 @@ jobs:
             fi
           done
           exit $fail
+        working-directory: lex-llm
 
       - name: Format check
         run: lex fmt --check src/ tests/
+        working-directory: lex-llm
 
       - name: Test
         run: lex test --allow-effects io,time,crypto,random,sql,fs_read,fs_write,net,concurrent tests/
+        working-directory: lex-llm
