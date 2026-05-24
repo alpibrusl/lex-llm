@@ -61,5 +61,5 @@ jobs:
         working-directory: lex-llm
 
       - name: Test
-        run: lex test --allow-effects io,time,crypto,random,sql,fs_read,fs_write,net,concurrent tests/
+        run: lex test --allow-effects io,time,crypto,random,sql,fs_read,fs_write,net,concurrent,llm,proc tests/
         working-directory: lex-llm
