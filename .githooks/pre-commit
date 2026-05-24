@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LEX="${LEX:-lex}"
+fail=0
+
+staged=$(git diff --cached --name-only --diff-filter=ACM | grep '\.lex$' | grep '^src/' || true)
+
+if [ -n "$staged" ]; then
+  count=$(echo "$staged" | wc -l | tr -d ' ')
+  echo "[pre-commit] checking $count staged .lex file(s)"
+
+  needs_fmt=""
+  for f in $staged; do
+    if ! "$LEX" fmt --check "$f" >/dev/null 2>&1; then
+      needs_fmt="$needs_fmt $f"
+    fi
+  done
+  if [ -n "$needs_fmt" ]; then
+    echo "format: FAILED — run \`lex fmt src/\` and re-stage"
+    for f in $needs_fmt; do echo "  $f"; done
+    fail=1
+  else
+    echo "format: ok"
+  fi
+
+  for f in $staged; do
+    if ! "$LEX" check "$f" >/dev/null 2>&1; then
+      echo "type-check: FAILED — $f"
+      "$LEX" check "$f" 2>&1 | head -5
+      fail=1
+    fi
+  done
+  if [ "$fail" -eq 0 ]; then echo "type-check: ok"; fi
+fi
+
+conflict_files=$(git diff --cached --name-only --diff-filter=ACM | xargs grep -l "^<<<<<<< \|^=======$\|^>>>>>>> " 2>/dev/null || true)
+if [ -n "$conflict_files" ]; then
+  echo "conflict markers found — resolve before committing:"
+  echo "$conflict_files" | sed 's/^/  /'
+  fail=1
+fi
+
+exit $fail
