@@ -132,7 +132,7 @@ fn parse_choice(choice :: jv.Json) -> List[d.Delta] {
   }
   match finish {
     None => delta_deltas,
-    Some(r) => list.concat(delta_deltas, [d.FinishDelta(r)]),
+    Some(r) => list.concat(delta_deltas, [FinishDelta(r)]),
   }
 }
 
@@ -141,7 +141,7 @@ fn parse_delta_obj(dj :: jv.Json) -> List[d.Delta] {
     Some(JStr(s)) => if str.is_empty(s) {
       []
     } else {
-      [d.TextChunk(s)]
+      [TextChunk(s)]
     },
     _ => match jv.get_field(dj, "tool_calls") {
       Some(JList(calls)) => parse_tool_call_chunk(calls),
@@ -166,17 +166,17 @@ fn parse_tool_call_chunk(calls :: List[jv.Json]) -> List[d.Delta] {
           match (id_opt, name_opt) {
             (Some(JStr(id)), Some(JStr(name))) => match args_opt {
               Some(JStr(args)) => if str.is_empty(args) {
-                [d.ToolCallBegin(id, name)]
+                [ToolCallBegin(id, name)]
               } else {
-                [d.ToolCallBegin(id, name), d.ToolArgChunk(id, args)]
+                [ToolCallBegin(id, name), ToolArgChunk(id, args)]
               },
-              _ => [d.ToolCallBegin(id, name)],
+              _ => [ToolCallBegin(id, name)],
             },
             _ => match (str_field(cj, "id"), args_opt) {
               (id_str, Some(JStr(args))) => if str.is_empty(id_str) {
                 []
               } else {
-                [d.ToolArgChunk(id_str, args)]
+                [ToolArgChunk(id_str, args)]
               },
               _ => [],
             },

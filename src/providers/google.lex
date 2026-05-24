@@ -144,7 +144,7 @@ fn parse_candidate(cand :: jv.Json) -> List[d.Delta] {
     Some(c) => parse_parts(c),
   }
   let finish_deltas := match jv.get_field(cand, "finishReason") {
-    Some(JStr(r)) => [d.FinishDelta(normalise_finish(r))],
+    Some(JStr(r)) => [FinishDelta(normalise_finish(r))],
     _ => [],
   }
   list.concat(content_deltas, finish_deltas)
@@ -164,7 +164,7 @@ fn parse_part(part :: jv.Json) -> List[d.Delta] {
     Some(JStr(s)) => if str.is_empty(s) {
       []
     } else {
-      [d.TextChunk(s)]
+      [TextChunk(s)]
     },
     _ => match jv.get_field(part, "functionCall") {
       Some(fc) => {
@@ -174,7 +174,7 @@ fn parse_part(part :: jv.Json) -> List[d.Delta] {
           Some(aj) => jv.stringify(aj),
           None => "{}",
         }
-        [d.ToolCallBegin(id, name), d.ToolArgChunk(id, args)]
+        [ToolCallBegin(id, name), ToolArgChunk(id, args)]
       },
       None => [],
     },

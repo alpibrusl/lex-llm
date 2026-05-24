@@ -146,7 +146,7 @@ fn parse_chunk(j :: jv.Json) -> List[d.Delta] {
   }
   let finish_deltas := if done {
     let reason := finish_reason_from_msg(j)
-    [d.FinishDelta(reason)]
+    [FinishDelta(reason)]
   } else {
     []
   }
@@ -174,7 +174,7 @@ fn parse_assistant_message(mj :: jv.Json) -> List[d.Delta] {
     if is_xml {
       []
     } else {
-      [d.TextChunk(content)]
+      [TextChunk(content)]
     }
   }
   list.concat(text_deltas, call_deltas)
@@ -224,7 +224,7 @@ fn parse_xml_tool_calls(content :: Str) -> List[d.Delta] {
         } else {
           let id := str.concat("call_", name)
           let args := xml_params_to_json(part)
-          (false, list.concat(deltas, [d.ToolCallBegin(id, name), d.ToolArgChunk(id, args)]))
+          (false, list.concat(deltas, [ToolCallBegin(id, name), ToolArgChunk(id, args)]))
         }
       }
     }) {
@@ -325,7 +325,7 @@ fn parse_tool_calls(calls :: List[jv.Json]) -> List[d.Delta] {
           None => "{}",
         }
         let id := str.concat("call_", name)
-        list.concat(acc, [d.ToolCallBegin(id, name), d.ToolArgChunk(id, args)])
+        list.concat(acc, [ToolCallBegin(id, name), ToolArgChunk(id, args)])
       },
     }
   })

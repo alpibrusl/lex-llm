@@ -181,7 +181,7 @@ fn handle_block_start(state :: ParseState, j :: jv.Json) -> (ParseState, List[d.
       Some(JStr("tool_use")) => {
         let id := str_field(block, "id")
         let name := str_field(block, "name")
-        ({ block_type: "tool_use", tool_id: id, tool_name: name }, [d.ToolCallBegin(id, name)])
+        ({ block_type: "tool_use", tool_id: id, tool_name: name }, [ToolCallBegin(id, name)])
       },
       Some(JStr("text")) => ({ block_type: "text", tool_id: state.tool_id, tool_name: state.tool_name }, []),
       _ => (state, []),
@@ -198,7 +198,7 @@ fn handle_block_delta(state :: ParseState, j :: jv.Json) -> (ParseState, List[d.
         if str.is_empty(text) {
           (state, [])
         } else {
-          (state, [d.TextChunk(text)])
+          (state, [TextChunk(text)])
         }
       },
       Some(JStr("input_json_delta")) => {
@@ -206,7 +206,7 @@ fn handle_block_delta(state :: ParseState, j :: jv.Json) -> (ParseState, List[d.
         if str.is_empty(chunk) {
           (state, [])
         } else {
-          (state, [d.ToolArgChunk(state.tool_id, chunk)])
+          (state, [ToolArgChunk(state.tool_id, chunk)])
         }
       },
       _ => (state, []),
@@ -218,7 +218,7 @@ fn handle_message_delta(state :: ParseState, j :: jv.Json) -> (ParseState, List[
   match jv.get_field(j, "delta") {
     None => (state, []),
     Some(delta) => match jv.get_field(delta, "stop_reason") {
-      Some(JStr(reason)) => (state, [d.FinishDelta(normalise_finish(reason))]),
+      Some(JStr(reason)) => (state, [FinishDelta(normalise_finish(reason))]),
       _ => (state, []),
     },
   }
