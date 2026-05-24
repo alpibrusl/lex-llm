@@ -10,74 +10,71 @@
 # The ADT is provider-agnostic; each adapter converts to its wire format.
 
 import "lex-schema/json_value" as jv
+
 import "std.list" as list
-import "std.str"  as str
+
+import "std.str" as str
 
 # One tool invocation requested by the model.
-type ToolCall = {
-  id   :: Str,      # provider-assigned id for result correlation
-  name :: Str,      # matches Tool.name in the agent's tool list
-  args :: jv.Json,  # raw args JSON — validated by tool.lex before dispatch
-}
+type ToolCall = { id :: Str, name :: Str, args :: jv.Json }
 
-type Message =
-    UserMsg(Str)
-  | SystemMsg(Str)
-  | AssistantMsg(Str, List[ToolCall])   # (text_content, pending_calls)
-  | ToolMsg(Str, Str)                   # (call_id, result_content)
+type Message = UserMsg(Str) | SystemMsg(Str) | AssistantMsg((Str, List[ToolCall])) | ToolMsg((Str, Str))
 
 fn content(msg :: Message) -> Str
   examples {
-    content(UserMsg("hello"))         => "hello",
-    content(SystemMsg("be helpful"))  => "be helpful",
-    content(ToolMsg("id1", "42"))     => "42",
+    content(UserMsg("hello")) => "hello",
+    content(SystemMsg("be helpful")) => "be helpful",
+    content(ToolMsg("id1", "42")) => "42"
   }
 {
   match msg {
-    UserMsg(s)         => s,
-    SystemMsg(s)       => s,
+    UserMsg(s) => s,
+    SystemMsg(s) => s,
     AssistantMsg(s, _) => s,
-    ToolMsg(_, s)      => s,
+    ToolMsg(_, s) => s,
   }
 }
 
 fn role_str(msg :: Message) -> Str
   examples {
-    role_str(UserMsg("hi"))    => "user",
-    role_str(SystemMsg("sys")) => "system",
+    role_str(UserMsg("hi")) => "user",
+    role_str(SystemMsg("sys")) => "system"
   }
 {
   match msg {
-    UserMsg(_)         => "user",
-    SystemMsg(_)       => "system",
+    UserMsg(_) => "user",
+    SystemMsg(_) => "system",
     AssistantMsg(_, _) => "assistant",
-    ToolMsg(_, _)      => "tool",
+    ToolMsg(_, _) => "tool",
   }
 }
 
 fn has_tool_calls(msg :: Message) -> Bool
   examples {
-    has_tool_calls(UserMsg("hi"))          => false,
-    has_tool_calls(AssistantMsg("ok", [])) => false,
+    has_tool_calls(UserMsg("hi")) => false,
+    has_tool_calls(AssistantMsg("ok", [])) => false
   }
 {
   match msg {
     AssistantMsg(_, calls) => not list.is_empty(calls),
-    _                      => false,
+    _ => false,
   }
 }
 
-fn user(text :: Str)   -> Message { UserMsg(text) }
-fn system(text :: Str) -> Message { SystemMsg(text) }
+fn user(text :: Str) -> Message {
+  UserMsg(text)
+}
+
+fn system(text :: Str) -> Message {
+  SystemMsg(text)
+}
 
 fn tool_result(call_id :: Str, body :: jv.Json) -> Message {
   ToolMsg(call_id, jv.stringify(body))
 }
 
 fn tool_error(call_id :: Str, err :: Str) -> Message {
-  ToolMsg(call_id,
-    str.concat("{\"error\":\"",
-      str.concat(json_escape(err), "\"}")))
+  ToolMsg(call_id, str.concat("{\"error\":\"", str.concat(json_escape(err), "\"}")))
 }
 
 # Minimal JSON string escape for embedding in a string literal.
@@ -89,7 +86,8 @@ fn json_escape(s :: Str) -> Str {
       "\\" => "\\\\",
       "\n" => "\\n",
       "\r" => "\\r",
-      _    => c,
+      _ => c,
     })
   })
 }
+

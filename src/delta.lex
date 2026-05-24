@@ -8,39 +8,31 @@
 import "./message" as msg
 
 # Provider-level streaming chunk.
-type Delta =
-    TextChunk(Str)             # incremental text token
-  | ToolCallBegin(Str, Str)    # (call_id, tool_name) — model starts a call
-  | ToolArgChunk(Str, Str)     # (call_id, partial_args_json)
-  | FinishDelta(Str)           # finish_reason: "stop" | "tool_calls" | "length"
+type Delta = TextChunk(Str) | ToolCallBegin((Str, Str)) | ToolArgChunk((Str, Str)) | FinishDelta(Str)
 
-# run_loop-level event visible to callers.
-type Step =
-    StepDelta(Delta)           # raw provider chunk — stream for live UI
-  | StepToolExec(Str, Str)     # (tool_name, call_id) — about to dispatch
-  | StepToolResult(Str, Bool)  # (call_id, success)
-  | StepDone(msg.Message)      # final assembled assistant message
+type Step = StepDelta(Delta) | StepToolExec((Str, Str)) | StepToolResult((Str, Bool)) | StepDone(msg.Message)
 
 fn is_finish(delta :: Delta) -> Bool
   examples {
-    is_finish(TextChunk("hi"))       => false,
-    is_finish(FinishDelta("stop"))   => true,
+    is_finish(TextChunk("hi")) => false,
+    is_finish(FinishDelta("stop")) => true
   }
 {
   match delta {
     FinishDelta(_) => true,
-    _              => false,
+    _ => false,
   }
 }
 
 fn finish_reason(delta :: Delta) -> Option[Str]
   examples {
-    finish_reason(TextChunk("x"))      => None,
-    finish_reason(FinishDelta("stop")) => Some("stop"),
+    finish_reason(TextChunk("x")) => None,
+    finish_reason(FinishDelta("stop")) => Some("stop")
   }
 {
   match delta {
     FinishDelta(r) => Some(r),
-    _              => None,
+    _ => None,
   }
 }
+

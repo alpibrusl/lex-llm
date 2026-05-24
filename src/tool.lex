@@ -15,51 +15,35 @@
 # and drops those that Deny or are Inconclusive, so only contextually
 # permitted tools are offered to the model on each turn.
 
-import "lex-schema/schema"     as s
+import "lex-schema/schema" as s
+
 import "lex-schema/json_value" as jv
-import "lex-schema/error"      as e
+
+import "lex-schema/error" as e
 
 import "lex-spec/spec" as sp
+
 import "lex-spec/eval" as ev
 
 import "std.list" as list
-import "std.str"  as str
 
-type Tool = {
-  name         :: Str,
-  description  :: Str,
-  params       :: s.ModelSchema,
-  execute      :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors],
-  precondition :: Option[sp.Spec],
-}
+import "std.str" as str
+
+type Tool = { name :: Str, description :: Str, params :: s.ModelSchema, execute :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors], precondition :: Option[sp.Spec] }
 
 # Canonical constructor — no precondition (always available).
-fn define(
-  name        :: Str,
-  description :: Str,
-  params      :: s.ModelSchema,
-  execute     :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors]
-) -> Tool {
-  { name: name, description: description, params: params,
-    execute: execute, precondition: None }
+fn define(name :: Str, description :: Str, params :: s.ModelSchema, execute :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors]) -> Tool {
+  { name: name, description: description, params: params, execute: execute, precondition: None }
 }
 
 # Constructor with a spec precondition attached.
-fn define_gated(
-  name        :: Str,
-  description :: Str,
-  params      :: s.ModelSchema,
-  execute     :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors],
-  spec        :: sp.Spec
-) -> Tool {
-  { name: name, description: description, params: params,
-    execute: execute, precondition: Some(spec) }
+fn define_gated(name :: Str, description :: Str, params :: s.ModelSchema, execute :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors], spec :: sp.Spec) -> Tool {
+  { name: name, description: description, params: params, execute: execute, precondition: Some(spec) }
 }
 
 # Attach or replace the precondition on an existing tool.
 fn with_precondition(tool :: Tool, spec :: sp.Spec) -> Tool {
-  { name: tool.name, description: tool.description, params: tool.params,
-    execute: tool.execute, precondition: Some(spec) }
+  { name: tool.name, description: tool.description, params: tool.params, execute: tool.execute, precondition: Some(spec) }
 }
 
 # Validate args through the tool's param schema then dispatch.
@@ -76,7 +60,11 @@ fn find_by_name(tools :: List[Tool], name :: Str) -> Option[Tool] {
   list.fold(tools, None, fn (acc :: Option[Tool], tool :: Tool) -> Option[Tool] {
     match acc {
       Some(_) => acc,
-      None    => if tool.name == name { Some(tool) } else { None },
+      None => if tool.name == name {
+        Some(tool)
+      } else {
+        None
+      },
     }
   })
 }
@@ -85,10 +73,10 @@ fn find_by_name(tools :: List[Tool], name :: Str) -> Option[Tool] {
 # A tool with no precondition is always available.
 fn is_available(tool :: Tool, bindings :: List[(Str, sp.SpecValue)]) -> Bool {
   match tool.precondition {
-    None       => true,
+    None => true,
     Some(spec) => match ev.eval(spec, bindings) {
       Allow => true,
-      _     => false,
+      _ => false,
     },
   }
 }
@@ -112,30 +100,16 @@ fn format_validation_error(errs :: e.Errors) -> Str {
 
 # OpenAI function-tool JSON: { "type": "function", "function": { name, description, parameters } }
 fn to_openai_json(tool :: Tool) -> jv.Json {
-  JObj([
-    ("type",     JStr("function")),
-    ("function", JObj([
-      ("name",        JStr(tool.name)),
-      ("description", JStr(tool.description)),
-      ("parameters",  s.to_json_schema(tool.params)),
-    ])),
-  ])
+  JObj([("type", JStr("function")), ("function", JObj([("name", JStr(tool.name)), ("description", JStr(tool.description)), ("parameters", s.to_json_schema(tool.params))]))])
 }
 
 # Anthropic tool JSON: { name, description, input_schema }
 fn to_anthropic_json(tool :: Tool) -> jv.Json {
-  JObj([
-    ("name",         JStr(tool.name)),
-    ("description",  JStr(tool.description)),
-    ("input_schema", s.to_json_schema(tool.params)),
-  ])
+  JObj([("name", JStr(tool.name)), ("description", JStr(tool.description)), ("input_schema", s.to_json_schema(tool.params))])
 }
 
 # Google Gemini function declaration: { name, description, parameters }
 fn to_google_json(tool :: Tool) -> jv.Json {
-  JObj([
-    ("name",        JStr(tool.name)),
-    ("description", JStr(tool.description)),
-    ("parameters",  s.to_json_schema(tool.params)),
-  ])
+  JObj([("name", JStr(tool.name)), ("description", JStr(tool.description)), ("parameters", s.to_json_schema(tool.params))])
 }
+

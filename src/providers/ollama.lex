@@ -8,114 +8,88 @@
 # model pulled into a local Ollama instance.
 # Ollama ≥0.3 also supports function/tool calling in OpenAI format.
 
-import "../message"  as msg
-import "../delta"    as d
-import "../tool"     as t
+import "../message" as msg
+
+import "../delta" as d
+
+import "../tool" as t
+
 import "../provider" as prov
-import "../sse"      as sse
+
+import "../sse" as sse
 
 import "lex-schema/json_value" as jv
+
 import "std.http" as http
+
 import "std.list" as list
-import "std.str"  as str
+
+import "std.str" as str
+
 import "std.iter" as iter
 
-fn default_base_url() -> Str { "http://localhost:11434/api/chat" }
+fn default_base_url() -> Str {
+  "http://localhost:11434/api/chat"
+}
 
 type OllamaConfig = { base_url :: Str }
 
 fn default_config() -> OllamaConfig
   examples {
-    default_config() => { base_url: "http://localhost:11434/api/chat" },
+    default_config() => { base_url: "http://localhost:11434/api/chat" }
   }
-{ { base_url: default_base_url() } }
-
-fn make_provider(config :: OllamaConfig) -> prov.Provider {
-  {
-    name: "ollama",
-    chat: fn (
-      model    :: prov.ModelRef,
-      messages :: List[msg.Message],
-      tools    :: List[t.Tool]
-    ) -> [net, llm] Iter[d.Delta] {
-      chat(config, model, messages, tools)
-    },
-  }
+{
+  { base_url: default_base_url() }
 }
 
-fn chat(
-  config   :: OllamaConfig,
-  model    :: prov.ModelRef,
-  messages :: List[msg.Message],
-  tools    :: List[t.Tool]
-) -> [net, llm] Iter[d.Delta] {
-  let body    := build_request(model, messages, tools)
+fn make_provider(config :: OllamaConfig) -> prov.Provider {
+  { name: "ollama", chat: fn (model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
+    chat(config, model, messages, tools)
+  } }
+}
+
+fn chat(config :: OllamaConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
+  let body := build_request(model, messages, tools)
   let headers := sse.local_post_headers()
   let raw_lines := match http.stream_lines(config.base_url, headers, body) {
-    Err(_)  => iter.from_list([]),
-    Ok(it)  => it,
+    Err(_) => iter.from_list([]),
+    Ok(it) => it,
   }
   let lines := iter.to_list(raw_lines)
   parse_stream(lines)
 }
 
 # ---- Request building --------------------------------------------
-
-fn build_request(
-  model    :: prov.ModelRef,
-  messages :: List[msg.Message],
-  tools    :: List[t.Tool]
-) -> Str {
-  # qwen3 models produce XML tool calls in the content field when streaming
-  # with a system prompt (their native agentic format). Non-streaming always
-  # returns proper structured tool_calls JSON. opencode solves this by using
-  # DashScope's API instead of Ollama; locally we just disable streaming.
-  let streaming := if str.starts_with(model.model, "qwen3") { false } else { true }
-  let base := [
-    ("model",    JStr(model.model)),
-    ("messages", JList(list.map(messages, encode_message))),
-    ("stream",   JBool(streaming)),
-  ]
-  let with_tools :=
-    if list.is_empty(tools) { base }
-    else { list.concat(base, [("tools", JList(list.map(tools, t.to_openai_json)))]) }
+fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
+  let streaming := if str.starts_with(model.model, "qwen3") {
+    false
+  } else {
+    true
+  }
+  let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(streaming))]
+  let with_tools := if list.is_empty(tools) {
+    base
+  } else {
+    list.concat(base, [("tools", JList(list.map(tools, t.to_openai_json)))])
+  }
   jv.stringify(JObj(with_tools))
 }
 
 fn encode_message(m :: msg.Message) -> jv.Json {
   match m {
-    msg.UserMsg(text) =>
-      JObj([("role", JStr("user")), ("content", JStr(text))]),
-    msg.SystemMsg(text) =>
-      JObj([("role", JStr("system")), ("content", JStr(text))]),
-    msg.AssistantMsg(text, calls) =>
-      if list.is_empty(calls) {
-        JObj([("role", JStr("assistant")), ("content", JStr(text))])
-      } else {
-        JObj([
-          ("role",       JStr("assistant")),
-          ("content",    JStr("")),
-          ("tool_calls", JList(list.map(calls, encode_tool_call))),
-        ])
-      },
-    msg.ToolMsg(call_id, content) =>
-      JObj([
-        ("role",         JStr("tool")),
-        ("tool_call_id", JStr(call_id)),
-        ("content",      JStr(content)),
-      ]),
+    UserMsg(text) => JObj([("role", JStr("user")), ("content", JStr(text))]),
+    SystemMsg(text) => JObj([("role", JStr("system")), ("content", JStr(text))]),
+    AssistantMsg(text, calls) => if list.is_empty(calls) {
+      JObj([("role", JStr("assistant")), ("content", JStr(text))])
+    } else {
+      JObj([("role", JStr("assistant")), ("content", JStr("")), ("tool_calls", JList(list.map(calls, encode_tool_call)))])
+    },
+    ToolMsg(call_id, content) => JObj([("role", JStr("tool")), ("tool_call_id", JStr(call_id)), ("content", JStr(content))]),
   }
 }
 
 fn encode_tool_call(call :: msg.ToolCall) -> jv.Json {
-  JObj([
-    ("id",   JStr(call.id)),
-    ("type", JStr("function")),
-    ("function", JObj([
-      ("name",      JStr(call.name)),
-      ("arguments", JStr(jv.stringify(call.args))),
-    ])),
-  ])
+  JObj([("id", JStr(call.id)), ("type", JStr("function")), ("function", JObj([("name", JStr(call.name)), ("arguments", JStr(jv.stringify(call.args)))]))])
 }
 
 # ---- Response parsing --------------------------------------------
@@ -126,70 +100,79 @@ fn encode_tool_call(call :: msg.ToolCall) -> jv.Json {
 #   { "message": { "role":"assistant", "content":"",
 #                  "tool_calls": [{"function":{"name":"...","arguments":{...}}}] },
 #     "done": true }
-
 fn parse_stream(lines :: List[Str]) -> Iter[d.Delta] {
-  # Try streaming NDJSON: one complete JSON object per line.
-  let stream_deltas := list.fold(lines, [],
-    fn (acc :: List[d.Delta], line :: Str) -> List[d.Delta] {
-      let t := str.trim(line)
-      if str.is_empty(t) { acc }
-      else { match jv.parse_into_errors(t) {
+  let stream_deltas := list.fold(lines, [], fn (acc :: List[d.Delta], line :: Str) -> List[d.Delta] {
+    let t := str.trim(line)
+    if str.is_empty(t) {
+      acc
+    } else {
+      match jv.parse_into_errors(t) {
         Err(_) => acc,
-        Ok(j)  => list.concat(acc, parse_chunk(j)),
-      } }
-    })
-  # If streaming parse found nothing, try joining all lines as a single JSON
-  # object. Ollama non-streaming responses (stream:false) are pretty-printed
-  # multi-line JSON that cannot be parsed line-by-line.
-  let deltas :=
-    if list.is_empty(stream_deltas) {
-      let full := str.trim(str.join(lines, ""))
-      if str.is_empty(full) { [] }
-      else { match jv.parse_into_errors(full) {
+        Ok(j) => list.concat(acc, parse_chunk(j)),
+      }
+    }
+  })
+  let deltas := if list.is_empty(stream_deltas) {
+    let full := str.trim(str.join(lines, ""))
+    if str.is_empty(full) {
+      []
+    } else {
+      match jv.parse_into_errors(full) {
         Err(_) => [],
-        Ok(j)  => parse_chunk(j),
-      } }
-    } else { stream_deltas }
+        Ok(j) => parse_chunk(j),
+      }
+    }
+  } else {
+    stream_deltas
+  }
   iter.from_list(deltas)
 }
 
 fn parse_chunk(j :: jv.Json) -> List[d.Delta] {
   let done := match jv.get_field(j, "done") {
-    Some(JBool(b)) => b, _ => false
+    Some(JBool(b)) => b,
+    _ => false,
   }
   let msg_deltas := match jv.get_field(j, "message") {
     None => [],
-    Some(mj) =>
-      match jv.get_field(mj, "role") {
-        Some(JStr("assistant")) => parse_assistant_message(mj),
-        _                       => [],
-      },
+    Some(mj) => match jv.get_field(mj, "role") {
+      Some(JStr("assistant")) => parse_assistant_message(mj),
+      _ => [],
+    },
   }
-  let finish_deltas :=
-    if done {
-      let reason := finish_reason_from_msg(j)
-      [d.FinishDelta(reason)]
-    } else { [] }
+  let finish_deltas := if done {
+    let reason := finish_reason_from_msg(j)
+    [d.FinishDelta(reason)]
+  } else {
+    []
+  }
   list.concat(msg_deltas, finish_deltas)
 }
 
 fn parse_assistant_message(mj :: jv.Json) -> List[d.Delta] {
   let content := match jv.get_field(mj, "content") {
-    Some(JStr(s)) => s, _ => ""
+    Some(JStr(s)) => s,
+    _ => "",
   }
-  # Prefer structured tool_calls; fall back to qwen3 XML format in content.
   let call_deltas := match jv.get_field(mj, "tool_calls") {
     Some(JList(calls)) => parse_tool_calls(calls),
     _ => parse_xml_tool_calls(content),
   }
-  # Only emit TextChunk when content is genuine text, not XML tool markup.
   let trimmed_content := str.trim(content)
-  let is_xml :=
-    if str.starts_with(trimmed_content, "<function=") { true }
-    else { str.starts_with(trimmed_content, "<tool_call>") }
-  let text_deltas :=
-    if str.is_empty(content) { [] }
-    else { if is_xml { [] } else { [d.TextChunk(content)] } }
+  let is_xml := if str.starts_with(trimmed_content, "<function=") {
+    true
+  } else {
+    str.starts_with(trimmed_content, "<tool_call>")
+  }
+  let text_deltas := if str.is_empty(content) {
+    []
+  } else {
+    if is_xml {
+      []
+    } else {
+      [d.TextChunk(content)]
+    }
+  }
   list.concat(text_deltas, call_deltas)
 }
 
@@ -211,71 +194,89 @@ fn parse_assistant_message(mj :: jv.Json) -> List[d.Delta] {
 #
 # We parse this into the same TCBegin + TCArgs deltas produced by the
 # structured tool_calls path, so the rest of the pipeline is unchanged.
-
-type XmlPState =
-    XScan(Str)             # dummy Str; unit variants not supported
-  | XInParam(Str, Str)    # (param_name, accumulated_value_so_far)
+type XmlPState = XScan(Str) | XInParam((Str, Str))
 
 fn parse_xml_tool_calls(content :: Str) -> List[d.Delta] {
-  # Quick exit: no XML tool markers present.
   let func_parts := str.split(content, "<function=")
-  if list.len(func_parts) <= 1 { [] }
-  else {
-    match list.fold(func_parts, (true, []),
-      fn (acc :: (Bool, List[d.Delta]), part :: Str) -> (Bool, List[d.Delta]) {
-        let skip   := match acc { (b, _) => b }
-        let deltas := match acc { (_, ds) => ds }
-        if skip { (false, deltas) }   # first element is preamble before any <function=
-        else {
-          # part = "write>\n<parameter=path>\nfib.lex\n</parameter>..."
-          let name := str.trim(match list.head(str.split(part, ">")) {
-            Some(n) => n, None => ""
-          })
-          if str.is_empty(name) { (false, deltas) }
-          else {
-            let id   := str.concat("call_", name)
-            let args := xml_params_to_json(part)
-            (false, list.concat(deltas, [d.ToolCallBegin(id, name), d.ToolArgChunk(id, args)]))
-          }
+  if list.len(func_parts) <= 1 {
+    []
+  } else {
+    match list.fold(func_parts, (true, []), fn (acc :: (Bool, List[d.Delta]), part :: Str) -> (Bool, List[d.Delta]) {
+      let skip := match acc {
+        (b, _) => b,
+      }
+      let deltas := match acc {
+        (_, ds) => ds,
+      }
+      if skip {
+        (false, deltas)
+      } else {
+        let name := str.trim(match list.head(str.split(part, ">")) {
+          Some(n) => n,
+          None => "",
+        })
+        if str.is_empty(name) {
+          (false, deltas)
+        } else {
+          let id := str.concat("call_", name)
+          let args := xml_params_to_json(part)
+          (false, list.concat(deltas, [d.ToolCallBegin(id, name), d.ToolArgChunk(id, args)]))
         }
-      }) { (_, ds) => ds }
+      }
+    }) {
+      (_, ds) => ds,
+    }
   }
 }
 
 fn xml_params_to_json(func_body :: Str) -> Str {
-  # Walk lines with a state machine: scan for <parameter=name>, collect
-  # value lines until </parameter>, then repeat.
   let lines := str.split(func_body, "\n")
-  let result := list.fold(lines, (XScan(""), []),
-    fn (acc :: (XmlPState, List[(Str, Str)]), line :: Str)
-         -> (XmlPState, List[(Str, Str)]) {
-      let state  := match acc { (s, _) => s }
-      let params := match acc { (_, p) => p }
-      let t      := str.trim(line)
-      match state {
-        XScan(_) =>
-          if str.starts_with(t, "<parameter=") {
-            # "<parameter=path>" → name = "path"
-            let after := str_skip_prefix(t, "<parameter=")
-            let name  := str.trim(match list.head(str.split(after, ">")) {
-              Some(n) => n, None => after
-            })
-            if str.is_empty(name) { acc } else { (XInParam(name, ""), params) }
-          } else { acc },
-        XInParam(name, value) =>
-          if str.starts_with(t, "</parameter>") {
-            (XScan(""), list.concat(params, [(name, str.trim(value))]))
-          } else {
-            let sep     := if str.is_empty(value) { "" } else { "\n" }
-            let new_val := str.concat(value, str.concat(sep, line))
-            (XInParam(name, new_val), params)
-          },
-      }
-    })
-  let params := match result { (_, p) => p }
+  let result := list.fold(lines, (XScan(""), []), fn (acc :: (XmlPState, List[(Str, Str)]), line :: Str) -> (XmlPState, List[(Str, Str)]) {
+    let state := match acc {
+      (s, _) => s,
+    }
+    let params := match acc {
+      (_, p) => p,
+    }
+    let t := str.trim(line)
+    match state {
+      XScan(_) => if str.starts_with(t, "<parameter=") {
+        let after := str_skip_prefix(t, "<parameter=")
+        let name := str.trim(match list.head(str.split(after, ">")) {
+          Some(n) => n,
+          None => after,
+        })
+        if str.is_empty(name) {
+          acc
+        } else {
+          (XInParam(name, ""), params)
+        }
+      } else {
+        acc
+      },
+      XInParam(name, value) => if str.starts_with(t, "</parameter>") {
+        (XScan(""), list.concat(params, [(name, str.trim(value))]))
+      } else {
+        let sep := if str.is_empty(value) {
+          ""
+        } else {
+          "\n"
+        }
+        let new_val := str.concat(value, str.concat(sep, line))
+        (XInParam(name, new_val), params)
+      },
+    }
+  })
+  let params := match result {
+    (_, p) => p,
+  }
   let fields := list.map(params, fn (kv :: (Str, Str)) -> Str {
-    let k := match kv { (k, _) => k }
-    let v := match kv { (_, v) => v }
+    let k := match kv {
+      (k, _) => k,
+    }
+    let v := match kv {
+      (_, v) => v,
+    }
     str.concat(str.concat("\"", str.concat(k, "\": ")), jv.stringify(JStr(v)))
   })
   str.join(["{", str.join(fields, ", "), "}"], "")
@@ -285,44 +286,58 @@ fn xml_params_to_json(func_body :: Str) -> Str {
 # Returns `s` unchanged if `prefix` is not found.
 fn str_skip_prefix(s :: Str, prefix :: Str) -> Str {
   let parts := str.split(s, prefix)
-  match list.fold(parts, (true, ""),
-    fn (acc :: (Bool, Str), part :: Str) -> (Bool, Str) {
-      let first  := match acc { (b, _) => b }
-      let so_far := match acc { (_, r) => r }
-      if first { (false, "") }
-      else {
-        (false, if str.is_empty(so_far) { part }
-                else { str.join([so_far, part], prefix) })
-      }
-    }) { (_, r) => r }
+  match list.fold(parts, (true, ""), fn (acc :: (Bool, Str), part :: Str) -> (Bool, Str) {
+    let first := match acc {
+      (b, _) => b,
+    }
+    let so_far := match acc {
+      (_, r) => r,
+    }
+    if first {
+      (false, "")
+    } else {
+      (false, if str.is_empty(so_far) {
+        part
+      } else {
+        str.join([so_far, part], prefix)
+      })
+    }
+  }) {
+    (_, r) => r,
+  }
 }
 
 fn parse_tool_calls(calls :: List[jv.Json]) -> List[d.Delta] {
-  list.fold(calls, [],
-    fn (acc :: List[d.Delta], cj :: jv.Json) -> List[d.Delta] {
-      match jv.get_field(cj, "function") {
-        None => acc,
-        Some(fj) => {
-          let name := match jv.get_field(fj, "name") { Some(JStr(s)) => s, _ => "" }
-          let args := match jv.get_field(fj, "arguments") {
-            Some(aj) => jv.stringify(aj),
-            None     => "{}",
-          }
-          let id := str.concat("call_", name)
-          list.concat(acc, [d.ToolCallBegin(id, name), d.ToolArgChunk(id, args)])
-        },
-      }
-    })
+  list.fold(calls, [], fn (acc :: List[d.Delta], cj :: jv.Json) -> List[d.Delta] {
+    match jv.get_field(cj, "function") {
+      None => acc,
+      Some(fj) => {
+        let name := match jv.get_field(fj, "name") {
+          Some(JStr(s)) => s,
+          _ => "",
+        }
+        let args := match jv.get_field(fj, "arguments") {
+          Some(aj) => jv.stringify(aj),
+          None => "{}",
+        }
+        let id := str.concat("call_", name)
+        list.concat(acc, [d.ToolCallBegin(id, name), d.ToolArgChunk(id, args)])
+      },
+    }
+  })
 }
 
 fn finish_reason_from_msg(j :: jv.Json) -> Str {
   match jv.get_field(j, "message") {
-    Some(mj) =>
-      match jv.get_field(mj, "tool_calls") {
-        Some(JList(calls)) =>
-          if list.is_empty(calls) { "stop" } else { "tool_calls" },
-        _ => "stop",
+    Some(mj) => match jv.get_field(mj, "tool_calls") {
+      Some(JList(calls)) => if list.is_empty(calls) {
+        "stop"
+      } else {
+        "tool_calls"
       },
+      _ => "stop",
+    },
     _ => "stop",
   }
 }
+
