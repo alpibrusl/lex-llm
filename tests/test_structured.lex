@@ -23,7 +23,7 @@ fn test_collect_text_empty() -> Result[Unit, Str] {
 }
 
 fn test_collect_text_single() -> Result[Unit, Str] {
-  let got := st.collect_text([d.TextChunk("hello")])
+  let got := st.collect_text([TextChunk("hello")])
   if got == "hello" {
     Ok(())
   } else {
@@ -32,7 +32,7 @@ fn test_collect_text_single() -> Result[Unit, Str] {
 }
 
 fn test_collect_text_multi() -> Result[Unit, Str] {
-  let got := st.collect_text([d.TextChunk("foo"), d.TextChunk(" "), d.TextChunk("bar")])
+  let got := st.collect_text([TextChunk("foo"), TextChunk(" "), TextChunk("bar")])
   if got == "foo bar" {
     Ok(())
   } else {
@@ -41,7 +41,7 @@ fn test_collect_text_multi() -> Result[Unit, Str] {
 }
 
 fn test_collect_text_ignores_non_text() -> Result[Unit, Str] {
-  let got := st.collect_text([d.TextChunk("a"), d.ToolCallBegin("id1", "fn1"), d.ToolArgChunk("id1", "{"), d.TextChunk("b"), d.FinishDelta("stop")])
+  let got := st.collect_text([TextChunk("a"), ToolCallBegin("id1", "fn1"), ToolArgChunk("id1", "{"), TextChunk("b"), FinishDelta("stop")])
   if got == "ab" {
     Ok(())
   } else {
