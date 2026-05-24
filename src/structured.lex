@@ -52,8 +52,8 @@ fn call_once(agent :: ag.AgentDef, prompt :: Str) -> [net, llm] Str {
 
 fn collect_text(deltas :: List[d.Delta]) -> Str
   examples {
-    collect_text([d.TextChunk("hello"), d.TextChunk(" world")]) => "hello world",
-    collect_text([d.FinishDelta("stop")]) => "",
+    collect_text([TextChunk("hello"), TextChunk(" world")]) => "hello world",
+    collect_text([FinishDelta("stop")]) => "",
     collect_text([]) => ""
   }
 {

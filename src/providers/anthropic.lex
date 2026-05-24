@@ -20,6 +20,8 @@ import "lex-schema/json_value" as jv
 
 import "std.http" as http
 
+import "std.bytes" as bytes
+
 import "std.list" as list
 
 import "std.str" as str
@@ -57,10 +59,12 @@ fn chat(config :: AnthropicConfig, model :: prov.ModelRef, messages :: List[msg.
     (_, ms) => ms,
   }
   let body := build_request(model, sys, user_msgs, tools)
-  let headers := build_headers(config.api_key)
-  let lines := match http.stream_lines(config.base_url, headers, body) {
+  let lines := match http.post(config.base_url, bytes.from_str(body), "application/json") {
     Err(_) => iter.from_list([]),
-    Ok(it) => it,
+    Ok(r) => iter.from_list(str.split(match bytes.to_str(r.body) {
+      Err(_) => "",
+      Ok(s) => s,
+    }, "\n")),
   }
   let payloads := sse.data_payloads(lines)
   parse_stream(payloads)

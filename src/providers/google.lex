@@ -21,6 +21,8 @@ import "lex-schema/json_value" as jv
 
 import "std.http" as http
 
+import "std.bytes" as bytes
+
 import "std.list" as list
 
 import "std.str" as str
@@ -46,10 +48,12 @@ fn make_provider(config :: GoogleConfig) -> prov.Provider {
 fn chat(config :: GoogleConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let url := gemini_url(model.model, config.api_key)
   let body := build_request(messages, tools)
-  let headers := sse.local_post_headers()
-  let raw_lines := match http.stream_lines(url, headers, body) {
+  let raw_lines := match http.post(url, bytes.from_str(body), "application/json") {
     Err(_) => iter.from_list([]),
-    Ok(it) => it,
+    Ok(r) => iter.from_list(str.split(match bytes.to_str(r.body) {
+      Err(_) => "",
+      Ok(s) => s,
+    }, "\n")),
   }
   let lines := iter.to_list(raw_lines)
   parse_stream(lines)

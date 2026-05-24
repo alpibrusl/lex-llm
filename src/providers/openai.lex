@@ -22,6 +22,8 @@ import "lex-schema/json_value" as jv
 
 import "std.http" as http
 
+import "std.bytes" as bytes
+
 import "std.list" as list
 
 import "std.str" as str
@@ -46,10 +48,12 @@ fn make_provider(config :: OpenAIConfig) -> prov.Provider {
 
 fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let body := build_request(model, messages, tools)
-  let headers := sse.json_post_headers(config.api_key)
-  let lines := match http.stream_lines(config.base_url, headers, body) {
+  let lines := match http.post(config.base_url, bytes.from_str(body), "application/json") {
     Err(_) => iter.from_list([]),
-    Ok(it) => it,
+    Ok(r) => iter.from_list(str.split(match bytes.to_str(r.body) {
+      Err(_) => "",
+      Ok(s) => s,
+    }, "\n")),
   }
   let payloads := sse.data_payloads(lines)
   let deltas := list.fold(payloads, [], fn (acc :: List[d.Delta], payload :: Str) -> List[d.Delta] {

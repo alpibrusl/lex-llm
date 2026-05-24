@@ -72,7 +72,7 @@ fn default_options() -> AgentOptions
 #
 fn with_permission_gate(agent :: AgentDef, spec :: sp.Spec) -> AgentDef {
   let allowed := list.filter(agent.tools, fn (tool :: t.Tool) -> Bool {
-    let bindings := [("tool", sp.VStr(tool.name))]
+    let bindings := [("tool", VStr(tool.name))]
     sp.verdict_is_allow(ev.eval(spec, bindings))
   })
   { name: agent.name, goal: agent.goal, model: agent.model, provider: agent.provider, tools: allowed, options: agent.options }
@@ -103,14 +103,14 @@ fn run_loop_traced(agent :: AgentDef, conversation :: List[msg.Message], log :: 
 # ---- Internal recursion ------------------------------------------
 fn run_steps(agent :: AgentDef, conv :: List[msg.Message], budget :: Int) -> [net, llm, io, proc] List[d.Step] {
   if budget == 0 {
-    [d.StepDone(msg.AssistantMsg("[max_steps reached]", []))]
+    [StepDone(msg.AssistantMsg("[max_steps reached]", []))]
   } else {
     let messages := list.concat([msg.SystemMsg(agent.goal)], conv)
     let bindings := bindings_from_conv(conv)
     let avail_tools := t.filter_available(agent.tools, bindings)
     let raw_deltas := iter.to_list(agent.provider.chat(agent.model, messages, avail_tools))
     let delta_steps := list.map(raw_deltas, fn (dl :: d.Delta) -> d.Step {
-      d.StepDelta(dl)
+      StepDelta(dl)
     })
     let response := collect_response(raw_deltas)
     match response.finish_reason {
@@ -129,7 +129,7 @@ fn run_steps(agent :: AgentDef, conv :: List[msg.Message], budget :: Int) -> [ne
         }
         list.concat(delta_steps, list.concat(exec_steps, run_steps(agent, new_conv, budget - 1)))
       },
-      _ => list.concat(delta_steps, [d.StepDone(msg.AssistantMsg(response.content, []))]),
+      _ => list.concat(delta_steps, [StepDone(msg.AssistantMsg(response.content, []))]),
     }
   }
 }
@@ -150,14 +150,14 @@ fn any_dispatch_failed(dispatches :: List[Dispatch]) -> Bool {
 
 fn run_steps_traced(agent :: AgentDef, conv :: List[msg.Message], budget :: Int, log :: trail.Log, parent :: Option[Str]) -> [net, llm, io, proc, sql, time] List[d.Step] {
   if budget == 0 {
-    [d.StepDone(msg.AssistantMsg("[max_steps reached]", []))]
+    [StepDone(msg.AssistantMsg("[max_steps reached]", []))]
   } else {
     let messages := list.concat([msg.SystemMsg(agent.goal)], conv)
     let bindings := bindings_from_conv(conv)
     let avail_tools := t.filter_available(agent.tools, bindings)
     let raw_deltas := iter.to_list(agent.provider.chat(agent.model, messages, avail_tools))
     let delta_steps := list.map(raw_deltas, fn (dl :: d.Delta) -> d.Step {
-      d.StepDelta(dl)
+      StepDelta(dl)
     })
     let response := collect_response(raw_deltas)
     let step_payload := llm_step_json(agent.model, list.len(response.tool_calls))
@@ -182,7 +182,7 @@ fn run_steps_traced(agent :: AgentDef, conv :: List[msg.Message], budget :: Int,
         }
         list.concat(delta_steps, list.concat(exec_steps, run_steps_traced(agent, new_conv, budget - 1, log, step_id)))
       },
-      _ => list.concat(delta_steps, [d.StepDone(msg.AssistantMsg(response.content, []))]),
+      _ => list.concat(delta_steps, [StepDone(msg.AssistantMsg(response.content, []))]),
     }
   }
 }
@@ -202,7 +202,7 @@ fn last_user_content(conv :: List[msg.Message]) -> Str {
 }
 
 fn bindings_from_conv(conv :: List[msg.Message]) -> List[(Str, sp.SpecValue)] {
-  [("user_input", sp.VStr(last_user_content(conv)))]
+  [("user_input", VStr(last_user_content(conv)))]
 }
 
 # ---- Delta → CollectedResponse -----------------------------------
@@ -299,7 +299,7 @@ fn dispatch_one_traced(tools :: List[t.Tool], call :: CollectedCall, log :: trai
 
 fn dispatches_to_steps(dispatches :: List[Dispatch]) -> List[d.Step] {
   list.fold(dispatches, [], fn (acc :: List[d.Step], disp :: Dispatch) -> List[d.Step] {
-    list.concat(acc, [d.StepToolExec(disp.call.name, disp.call.id), d.StepToolResult(disp.call.id, disp.success)])
+    list.concat(acc, [StepToolExec(disp.call.name, disp.call.id), StepToolResult(disp.call.id, disp.success)])
   })
 }
 
