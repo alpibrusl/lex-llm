@@ -103,9 +103,9 @@ fn run_loop_traced(agent :: AgentDef, conversation :: List[msg.Message], log :: 
 # ---- Internal recursion ------------------------------------------
 fn run_steps(agent :: AgentDef, conv :: List[msg.Message], budget :: Int) -> [net, llm, io, proc] List[d.Step] {
   if budget == 0 {
-    [StepDone(msg.AssistantMsg("[max_steps reached]", []))]
+    [StepDone(AssistantMsg("[max_steps reached]", []))]
   } else {
-    let messages := list.concat([msg.SystemMsg(agent.goal)], conv)
+    let messages := list.concat([SystemMsg(agent.goal)], conv)
     let bindings := bindings_from_conv(conv)
     let avail_tools := t.filter_available(agent.tools, bindings)
     let raw_deltas := iter.to_list(agent.provider.chat(agent.model, messages, avail_tools))
@@ -118,18 +118,18 @@ fn run_steps(agent :: AgentDef, conv :: List[msg.Message], budget :: Int) -> [ne
         let dispatches := dispatch_calls(agent.tools, response.tool_calls)
         let exec_steps := dispatches_to_steps(dispatches)
         let tool_messages := dispatches_to_messages(dispatches)
-        let assistant_msg := msg.AssistantMsg(response.content, list.map(response.tool_calls, fn (c :: CollectedCall) -> msg.ToolCall {
+        let assistant_msg := AssistantMsg(response.content, list.map(response.tool_calls, fn (c :: CollectedCall) -> msg.ToolCall {
           { id: c.id, name: c.name, args: parse_args_or_empty(c.args_raw) }
         }))
         let base_conv := list.concat(conv, list.concat([assistant_msg], tool_messages))
         let new_conv := if any_dispatch_failed(dispatches) {
-          list.concat(base_conv, [msg.UserMsg("One or more tools returned errors. Read the error messages above, fix the code, and try again.")])
+          list.concat(base_conv, [UserMsg("One or more tools returned errors. Read the error messages above, fix the code, and try again.")])
         } else {
           base_conv
         }
         list.concat(delta_steps, list.concat(exec_steps, run_steps(agent, new_conv, budget - 1)))
       },
-      _ => list.concat(delta_steps, [StepDone(msg.AssistantMsg(response.content, []))]),
+      _ => list.concat(delta_steps, [StepDone(AssistantMsg(response.content, []))]),
     }
   }
 }
@@ -150,9 +150,9 @@ fn any_dispatch_failed(dispatches :: List[Dispatch]) -> Bool {
 
 fn run_steps_traced(agent :: AgentDef, conv :: List[msg.Message], budget :: Int, log :: trail.Log, parent :: Option[Str]) -> [net, llm, io, proc, sql, time] List[d.Step] {
   if budget == 0 {
-    [StepDone(msg.AssistantMsg("[max_steps reached]", []))]
+    [StepDone(AssistantMsg("[max_steps reached]", []))]
   } else {
-    let messages := list.concat([msg.SystemMsg(agent.goal)], conv)
+    let messages := list.concat([SystemMsg(agent.goal)], conv)
     let bindings := bindings_from_conv(conv)
     let avail_tools := t.filter_available(agent.tools, bindings)
     let raw_deltas := iter.to_list(agent.provider.chat(agent.model, messages, avail_tools))
@@ -171,18 +171,18 @@ fn run_steps_traced(agent :: AgentDef, conv :: List[msg.Message], budget :: Int,
         let dispatches := dispatch_calls_traced(agent.tools, response.tool_calls, log, step_id)
         let exec_steps := dispatches_to_steps(dispatches)
         let tool_messages := dispatches_to_messages(dispatches)
-        let assistant_msg := msg.AssistantMsg(response.content, list.map(response.tool_calls, fn (c :: CollectedCall) -> msg.ToolCall {
+        let assistant_msg := AssistantMsg(response.content, list.map(response.tool_calls, fn (c :: CollectedCall) -> msg.ToolCall {
           { id: c.id, name: c.name, args: parse_args_or_empty(c.args_raw) }
         }))
         let base_conv := list.concat(conv, list.concat([assistant_msg], tool_messages))
         let new_conv := if any_dispatch_failed(dispatches) {
-          list.concat(base_conv, [msg.UserMsg("One or more tools returned errors. Read the error messages above, fix the code, and try again.")])
+          list.concat(base_conv, [UserMsg("One or more tools returned errors. Read the error messages above, fix the code, and try again.")])
         } else {
           base_conv
         }
         list.concat(delta_steps, list.concat(exec_steps, run_steps_traced(agent, new_conv, budget - 1, log, step_id)))
       },
-      _ => list.concat(delta_steps, [StepDone(msg.AssistantMsg(response.content, []))]),
+      _ => list.concat(delta_steps, [StepDone(AssistantMsg(response.content, []))]),
     }
   }
 }
@@ -305,7 +305,7 @@ fn dispatches_to_steps(dispatches :: List[Dispatch]) -> List[d.Step] {
 
 fn dispatches_to_messages(dispatches :: List[Dispatch]) -> List[msg.Message] {
   list.map(dispatches, fn (disp :: Dispatch) -> msg.Message {
-    msg.ToolMsg(disp.call.id, disp.content)
+    ToolMsg(disp.call.id, disp.content)
   })
 }
 
