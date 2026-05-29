@@ -10,13 +10,15 @@
 #   6. If finish_reason = "tool_calls":
 #        a. Validate args via lex-schema; invalid → Err → ToolMsg so
 #           the model can self-correct on the next turn.
-#        b. Execute valid tools against the full agent.tools list so
-#           model references to prior-turn tools are not broken.
-#        c. Append AssistantMsg + ToolMsg results; recurse within budget.
+#        b. Check each tool call against agent.permission_spec (Phase 3):
+#           denied calls return spec-denied error and emit spec.denied trail
+#           event without executing; the model is expected to self-correct.
+#        c. Execute allowed tools; append AssistantMsg + ToolMsg; recurse.
 #   7. Otherwise emit StepDone.
 #
 # run_loop_traced: same loop with lex-trail events at each step.
-# with_permission_gate: filter tools via lex-spec Spec at construction time.
+# with_permission_gate: construction-time filter + store spec for runtime check.
+# make_agent: canonical constructor; sets permission_spec: None.
 
 import "./message" as msg
 
@@ -49,7 +51,9 @@ import "std.int" as int
 type AgentOptions = { temperature :: Option[Float], top_p :: Option[Float], max_steps :: Option[Int], max_tokens :: Option[Int] }
 
 # An agent is a value — compose agents by building AgentDef records.
-type AgentDef = { name :: Str, goal :: Str, model :: prov.ModelRef, provider :: prov.Provider, tools :: List[t.Tool], options :: AgentOptions }
+# Use make_agent() as the canonical constructor; it sets permission_spec: None.
+# Use with_permission_gate() to attach a runtime permission spec.
+type AgentDef = { name :: Str, goal :: Str, model :: prov.ModelRef, provider :: prov.Provider, tools :: List[t.Tool], options :: AgentOptions, permission_spec :: Option[sp.Spec] }
 
 fn default_options() -> AgentOptions
   examples {
@@ -59,23 +63,24 @@ fn default_options() -> AgentOptions
   { temperature: Some(0.7), top_p: None, max_steps: Some(20), max_tokens: Some(4096) }
 }
 
+fn make_agent(name :: Str, goal :: Str, model :: prov.ModelRef, provider :: prov.Provider, tools :: List[t.Tool], options :: AgentOptions) -> AgentDef {
+  { name: name, goal: goal, model: model, provider: provider, tools: tools, options: options, permission_spec: None }
+}
+
 # ---- Permission gating -------------------------------------------
 #
-# Filter an AgentDef's tool list to only tools allowed by a lex-spec Spec.
-# The spec is evaluated with a single bound variable "tool" (the tool name).
-# Deny or Inconclusive both remove the tool from the agent's visible set,
-# so the model never sees forbidden tool names in its prompt.
+# Construction-time: filter the tool list the model sees in its prompt.
+# Runtime (Phase 3): store the spec on AgentDef so dispatch_one can
+# re-evaluate it for every tool call — even if the model somehow tries
+# to invoke a tool that was removed at construction time.
 #
-# Apply at construction time for maximum isolation:
-#
-#   let gated := with_permission_gate(base_agent, rules.explore_permission())
-#
+# Deny or Inconclusive both block dispatch and emit a spec.denied trail event.
 fn with_permission_gate(agent :: AgentDef, spec :: sp.Spec) -> AgentDef {
   let allowed := list.filter(agent.tools, fn (tool :: t.Tool) -> Bool {
     let bindings := [("tool", VStr(tool.name))]
     sp.verdict_is_allow(ev.eval(spec, bindings))
   })
-  { name: agent.name, goal: agent.goal, model: agent.model, provider: agent.provider, tools: allowed, options: agent.options }
+  { name: agent.name, goal: agent.goal, model: agent.model, provider: agent.provider, tools: allowed, options: agent.options, permission_spec: Some(spec) }
 }
 
 # ---- Internal collected-response type ----------------------------
@@ -115,7 +120,7 @@ fn run_steps(agent :: AgentDef, conv :: List[msg.Message], budget :: Int) -> [ne
     let response := collect_response(raw_deltas)
     match response.finish_reason {
       "tool_calls" => {
-        let dispatches := dispatch_calls(agent.tools, response.tool_calls)
+        let dispatches := dispatch_calls(agent.tools, response.tool_calls, agent.permission_spec)
         let exec_steps := dispatches_to_steps(dispatches)
         let tool_messages := dispatches_to_messages(dispatches)
         let assistant_msg := AssistantMsg(response.content, list.map(response.tool_calls, fn (c :: CollectedCall) -> msg.ToolCall {
@@ -168,7 +173,7 @@ fn run_steps_traced(agent :: AgentDef, conv :: List[msg.Message], budget :: Int,
     }
     match response.finish_reason {
       "tool_calls" => {
-        let dispatches := dispatch_calls_traced(agent.tools, response.tool_calls, log, step_id)
+        let dispatches := dispatch_calls_traced(agent.tools, response.tool_calls, log, step_id, agent.permission_spec)
         let exec_steps := dispatches_to_steps(dispatches)
         let tool_messages := dispatches_to_messages(dispatches)
         let assistant_msg := AssistantMsg(response.content, list.map(response.tool_calls, fn (c :: CollectedCall) -> msg.ToolCall {
@@ -252,49 +257,76 @@ fn append_arg_chunk(calls :: List[CollectedCall], id :: Str, chunk :: Str) -> Li
 # Dispatch always uses the full agent.tools list — not avail_tools —
 # so models that reference a tool name from a prior turn (when it was
 # available) still get a coherent error rather than "unknown tool".
-fn dispatch_calls(tools :: List[t.Tool], calls :: List[CollectedCall]) -> [net, io, proc] List[Dispatch] {
+#
+# spec_opt: when Some, each call is checked against the spec before
+# execution. Denied calls return a spec-denied error to the model.
+fn dispatch_calls(tools :: List[t.Tool], calls :: List[CollectedCall], spec_opt :: Option[sp.Spec]) -> [net, io, proc] List[Dispatch] {
   list.map(calls, fn (call :: CollectedCall) -> [net, io, proc] Dispatch {
-    dispatch_one(tools, call)
+    dispatch_one(tools, call, spec_opt)
   })
 }
 
-fn dispatch_calls_traced(tools :: List[t.Tool], calls :: List[CollectedCall], log :: trail.Log, parent :: Option[Str]) -> [net, io, proc, sql, time] List[Dispatch] {
+fn dispatch_calls_traced(tools :: List[t.Tool], calls :: List[CollectedCall], log :: trail.Log, parent :: Option[Str], spec_opt :: Option[sp.Spec]) -> [net, io, proc, sql, time] List[Dispatch] {
   list.map(calls, fn (call :: CollectedCall) -> [net, io, proc, sql, time] Dispatch {
-    dispatch_one_traced(tools, call, log, parent)
+    dispatch_one_traced(tools, call, log, parent, spec_opt)
   })
 }
 
-fn dispatch_one(tools :: List[t.Tool], call :: CollectedCall) -> [net, io, proc] Dispatch {
-  let args := parse_args_or_empty(call.args_raw)
-  match t.find_by_name(tools, call.name) {
-    None => { call: call, success: false, content: str.concat("{\"error\":\"unknown tool: ", str.concat(call.name, "}")) },
-    Some(tool) => match t.validate_and_exec(tool, args) {
-      Ok(out) => { call: call, success: true, content: jv.stringify(out) },
-      Err(errs) => { call: call, success: false, content: str.concat("{\"error\":\"", str.concat(t.format_validation_error(errs), "}")) },
+fn dispatch_one(tools :: List[t.Tool], call :: CollectedCall, spec_opt :: Option[sp.Spec]) -> [net, io, proc] Dispatch {
+  let is_allowed := match spec_opt {
+    None => true,
+    Some(spec) => {
+      let bindings := [("tool", VStr(call.name))]
+      sp.verdict_is_allow(ev.eval(spec, bindings))
     },
   }
+  if is_allowed {
+    let args := parse_args_or_empty(call.args_raw)
+    match t.find_by_name(tools, call.name) {
+      None => { call: call, success: false, content: str.concat("{\"error\":\"unknown tool: ", str.concat(call.name, "}")) },
+      Some(tool) => match t.validate_and_exec(tool, args) {
+        Ok(out) => { call: call, success: true, content: jv.stringify(out) },
+        Err(errs) => { call: call, success: false, content: str.concat("{\"error\":\"", str.concat(t.format_validation_error(errs), "}")) },
+      },
+    }
+  } else {
+    { call: call, success: false, content: str.concat("{\"error\":\"spec-denied: tool '", str.concat(call.name, "' is not permitted by the agent permission policy\"}")) }
+  }
 }
 
-fn dispatch_one_traced(tools :: List[t.Tool], call :: CollectedCall, log :: trail.Log, parent :: Option[Str]) -> [net, io, proc, sql, time] Dispatch {
-  let inv_payload := cap_invoked_json(call.name, call.args_raw)
-  let inv_evt := trail.append(log, kinds.cap_invoked(), parent, inv_payload)
-  let inv_id := match inv_evt {
-    Ok(evt) => Some(evt.id),
-    Err(_) => parent,
+fn dispatch_one_traced(tools :: List[t.Tool], call :: CollectedCall, log :: trail.Log, parent :: Option[Str], spec_opt :: Option[sp.Spec]) -> [net, io, proc, sql, time] Dispatch {
+  let is_allowed := match spec_opt {
+    None => true,
+    Some(spec) => {
+      let bindings := [("tool", VStr(call.name))]
+      sp.verdict_is_allow(ev.eval(spec, bindings))
+    },
   }
-  let disp := dispatch_one(tools, call)
-  let kind := if disp.success {
-    kinds.cap_completed()
+  if is_allowed {
+    let inv_payload := cap_invoked_json(call.name, call.args_raw)
+    let inv_evt := trail.append(log, kinds.cap_invoked(), parent, inv_payload)
+    let inv_id := match inv_evt {
+      Ok(evt) => Some(evt.id),
+      Err(_) => parent,
+    }
+    let disp := dispatch_one(tools, call, None)
+    let kind := if disp.success {
+      kinds.cap_completed()
+    } else {
+      kinds.cap_failed()
+    }
+    let out_payload := if disp.success {
+      cap_completed_json(call.name, disp.content)
+    } else {
+      cap_failed_json(call.name, disp.content)
+    }
+    let _trail_result := trail.append(log, kind, inv_id, out_payload)
+    disp
   } else {
-    kinds.cap_failed()
+    let denied_payload := str.join(["{\"tool\":\"", call.name, "\",\"reason\":\"spec-denied\"}"], "")
+    let _denied_evt := trail.append(log, kinds.spec_denied(), parent, denied_payload)
+    { call: call, success: false, content: str.concat("{\"error\":\"spec-denied: tool '", str.concat(call.name, "' is not permitted by the agent permission policy\"}")) }
   }
-  let out_payload := if disp.success {
-    cap_completed_json(call.name, disp.content)
-  } else {
-    cap_failed_json(call.name, disp.content)
-  }
-  let trail_result := trail.append(log, kind, inv_id, out_payload)
-  disp
 }
 
 fn dispatches_to_steps(dispatches :: List[Dispatch]) -> List[d.Step] {
