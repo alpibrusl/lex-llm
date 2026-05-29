@@ -187,3 +187,7 @@ lex test   # runs tests/test_sse.lex and tests/test_structured.lex
   in lex-lang.
 - **No built-in retry** — wrap `run_loop` in `flow.retry` for transient
   HTTP error handling.
+
+---
+
+Built under the principles of [Trust Without Comprehension](https://alpibru.com/manifesto).
