@@ -321,6 +321,14 @@ fn dispatch_one_traced(tools :: List[t.Tool], call :: CollectedCall, log :: trai
       cap_failed_json(call.name, disp.content)
     }
     let _trail_result := trail.append(log, kind, inv_id, out_payload)
+    let _verified := match verified_kind_for_tool(call.name, disp.content) {
+      None => (),
+      Some(vkind) => {
+        let vpayload := str.join(["{\"tool\":\"", call.name, "\",\"result\":\"pass\"}"], "")
+        let _ve := trail.append(log, vkind, inv_id, vpayload)
+        ()
+      },
+    }
     disp
   } else {
     let denied_payload := str.join(["{\"tool\":\"", call.name, "\",\"reason\":\"spec-denied\"}"], "")
@@ -372,6 +380,31 @@ fn cap_failed_json(name :: Str, error :: Str) -> Str
   }
 {
   str.join(["{\"capability\":\"", name, "\",\"error\":", error, "}"], "")
+}
+
+# Return the verified.* kind to emit when a tool call passes verification,
+# or None if the tool does not produce a verifiable attestation.
+# Content is the stringified JStr result from the tool, so success phrases
+# appear inside the JSON string literal.
+fn verified_kind_for_tool(tool_name :: Str, content :: Str) -> Option[Str] {
+  match tool_name {
+    "lex_check" => if str.contains(content, "type check passed") {
+      Some(kinds.verified_type_check())
+    } else {
+      None
+    },
+    "lex_spec_check" => if str.contains(content, "spec passed") {
+      Some(kinds.verified_spec_check())
+    } else {
+      None
+    },
+    "lex_test" => if str.contains(content, "tests passed") {
+      Some(kinds.verified_test())
+    } else {
+      None
+    },
+    _ => None,
+  }
 }
 
 # ---- Helpers -----------------------------------------------------
