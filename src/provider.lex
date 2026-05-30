@@ -19,8 +19,8 @@ import "./tool" as t
 type ModelRef = { provider :: Str, model :: Str }
 
 # OpenAI
-fn gpt4o() -> ModelRef {
-  { provider: "openai", model: "gpt-4o" }
+fn gpt55() -> ModelRef {
+  { provider: "openai", model: "gpt-5.5" }
 }
 
 fn gpt4o_mini() -> ModelRef {
@@ -42,11 +42,11 @@ fn claude_haiku() -> ModelRef {
 
 # Google
 fn gemini_flash() -> ModelRef {
-  { provider: "google", model: "gemini-2.0-flash" }
+  { provider: "google", model: "gemini-3.5-flash" }
 }
 
 fn gemini_pro() -> ModelRef {
-  { provider: "google", model: "gemini-2.5-pro" }
+  { provider: "google", model: "gemini-3.5-pro" }
 }
 
 # Mistral

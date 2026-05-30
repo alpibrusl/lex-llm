@@ -63,12 +63,12 @@ lex run --allow-effects net,llm main.lex main '"sk-ant-..."'
 
 | Module | Constructor | Models |
 |---|---|---|
-| `lex-llm/providers/openai` | `make_provider(default_config(api_key))` | GPT-4o, GPT-4o-mini, o1, o3-mini, … |
+| `lex-llm/providers/openai` | `make_provider(default_config(api_key))` | GPT-5.5, GPT-4o-mini, … |
 | `lex-llm/providers/anthropic` | `make_provider(default_config(api_key))` | claude-opus-4-7, claude-sonnet-4-6, … |
-| `lex-llm/providers/google` | `make_provider({ api_key: key })` | gemini-2.0-flash, gemini-2.5-pro, … |
+| `lex-llm/providers/google` | `make_provider({ api_key: key })` | gemini-3.5-flash, gemini-3.5-pro, … |
 | `lex-llm/providers/ollama` | `make_provider(default_config())` | llama3, mistral, qwen2, … (local) |
 
-Convenience model refs: `prov.gpt4o()`, `prov.claude_sonnet()`,
+Convenience model refs: `prov.gpt55()`, `prov.claude_sonnet()`,
 `prov.gemini_flash()`, `prov.ollama("llama3")`.
 
 ---
