@@ -76,6 +76,10 @@ fn vllm(m :: Str) -> ModelRef {
   { provider: "vllm", model: m }
 }
 
+fn make_model_ref(provider_name :: Str, model_name :: Str) -> ModelRef {
+  { provider: provider_name, model: model_name }
+}
+
 # The provider interface.
 # chat returns a lazy Iter[Delta]; the caller collects it or re-emits for streaming.
 type Provider = { name :: Str, chat :: (ModelRef, List[msg.Message], List[t.Tool]) -> [net, llm] Iter[d.Delta] }
