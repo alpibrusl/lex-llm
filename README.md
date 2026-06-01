@@ -16,6 +16,20 @@ beyond [lex-schema](https://github.com/alpibrusl/lex-schema).
 
 ---
 
+## Demo — spec-gated agent tools
+
+Typed permissions · property-checked · formally verified. Zero LLM API calls needed.
+
+[![asciicast](https://asciinema.org/a/zb1DmHg7vQzhLqGM.svg)](https://asciinema.org/a/zb1DmHg7vQzhLqGM)
+
+```sh
+bash examples/spec_gated_agent.sh
+```
+
+Define a spec (`IF tool == "submit_order" THEN qty ≤ 1000 AND approved == true`), evaluate it against four tool-call scenarios, property-check it across 100 random inputs, and export a Z3-compatible SMT-LIB script — all from the same typed policy expression.
+
+---
+
 ## Quick start
 
 ```lex
