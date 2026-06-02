@@ -10,6 +10,8 @@
 
 import "./provider" as prov
 
+import "std.str" as str
+
 import "./providers/anthropic" as anth
 
 import "./providers/openai" as oai
@@ -57,7 +59,7 @@ fn ollama_model() -> [env] Str {
 }
 
 fn ollama_at(host :: Str) -> prov.Provider {
-  olla.make_provider({ base_url: host })
+  olla.make_provider({ base_url: str.concat(host, "/api/chat") })
 }
 
 # vLLM — OpenAI-compatible, no key required by default.
