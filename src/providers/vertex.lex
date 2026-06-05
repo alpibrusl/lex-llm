@@ -39,19 +39,23 @@ import "std.str" as str
 import "std.iter" as iter
 
 # ── Config ────────────────────────────────────────────────────────────────────
-type VertexConfig = { api_key :: Str, project_id :: Str, location :: Str }
+# access_token: OAuth2 Bearer token (from `gcloud auth print-access-token`)
+#               or a GCP service account access token.
+type VertexConfig = { access_token :: Str, project_id :: Str, location :: Str }
 
-fn default_config(api_key :: Str, project_id :: Str) -> VertexConfig {
-  { api_key: api_key, project_id: project_id, location: "europe-west1" }
+fn default_config(access_token :: Str, project_id :: Str) -> VertexConfig {
+  { access_token: access_token, project_id: project_id, location: "europe-west1" }
 }
 
-fn config_at(api_key :: Str, project_id :: Str, location :: Str) -> VertexConfig {
-  { api_key: api_key, project_id: project_id, location: location }
+fn config_at(access_token :: Str, project_id :: Str, location :: Str) -> VertexConfig {
+  { access_token: access_token, project_id: project_id, location: location }
 }
 
 # ── URL builder ───────────────────────────────────────────────────────────────
+# Uses ?access_token= query param — Google APIs accept OAuth2 tokens this way,
+# which avoids needing custom HTTP headers (std.http.post has no header support).
 fn vertex_url(cfg :: VertexConfig, model :: Str) -> Str {
-  str.join(["https://", cfg.location, "-aiplatform.googleapis.com/v1/projects/", cfg.project_id, "/locations/", cfg.location, "/publishers/google/models/", model, ":streamGenerateContent?key=", cfg.api_key], "")
+  str.join(["https://", cfg.location, "-aiplatform.googleapis.com/v1/projects/", cfg.project_id, "/locations/", cfg.location, "/publishers/google/models/", model, ":streamGenerateContent?access_token=", cfg.access_token], "")
 }
 
 # ── Provider factory ──────────────────────────────────────────────────────────

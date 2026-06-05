@@ -103,10 +103,11 @@ fn vllm_at(host :: Str) -> prov.Provider {
 }
 
 # ── Vertex AI (Gemini via Google Cloud regional endpoint) ─────────────────────
-# Reads VERTEX_API_KEY, VERTEX_PROJECT, VERTEX_LOCATION from environment.
+# Reads VERTEX_ACCESS_TOKEN, VERTEX_PROJECT, VERTEX_LOCATION from environment.
+# VERTEX_ACCESS_TOKEN = output of `gcloud auth print-access-token`.
 # Default location: europe-west1 (EU).
 fn vertex() -> [env] prov.Provider {
-  let api_key := get_key("VERTEX_API_KEY")
+  let token := get_key("VERTEX_ACCESS_TOKEN")
   let project := get_key("VERTEX_PROJECT")
   let location := match env.get("VERTEX_LOCATION") {
     None => "europe-west1",
@@ -116,10 +117,10 @@ fn vertex() -> [env] prov.Provider {
       l
     },
   }
-  vtx.make_provider(vtx.config_at(api_key, project, location))
+  vtx.make_provider(vtx.config_at(token, project, location))
 }
 
-fn vertex_with_config(api_key :: Str, project_id :: Str, location :: Str) -> prov.Provider {
-  vtx.make_provider(vtx.config_at(api_key, project_id, location))
+fn vertex_with_config(access_token :: Str, project_id :: Str, location :: Str) -> prov.Provider {
+  vtx.make_provider(vtx.config_at(access_token, project_id, location))
 }
 
