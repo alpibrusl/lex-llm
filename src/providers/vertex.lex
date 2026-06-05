@@ -78,14 +78,14 @@ fn make_provider(config :: VertexConfig) -> prov.Provider {
 fn chat(config :: VertexConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let url := vertex_url(config, model.model)
   let body := build_request(messages, tools)
-  let raw_lines := match http.post(url, bytes.from_str(body), "application/json") {
-    Err(_) => iter.from_list([]),
-    Ok(r) => iter.from_list(str.split(match bytes.to_str(r.body) {
+  let body_str := match http.post(url, bytes.from_str(body), "application/json") {
+    Err(_) => "",
+    Ok(r) => match bytes.to_str(r.body) {
       Err(_) => "",
       Ok(s) => s,
-    }, "\n")),
+    },
   }
-  parse_stream(iter.to_list(raw_lines))
+  parse_stream(body_str)
 }
 
 # ── Request building ──────────────────────────────────────────────────────────
@@ -141,19 +141,27 @@ fn encode_content(m :: msg.Message) -> jv.Json {
   }
 }
 
-# ── Response parsing (identical format to Google AI Studio) ──────────────────
-fn parse_stream(lines :: List[Str]) -> Iter[d.Delta] {
-  let deltas := list.fold(lines, [], fn (acc :: List[d.Delta], line :: Str) -> List[d.Delta] {
-    let trimmed := str.trim(line)
-    if str.is_empty(trimmed) {
-      acc
-    } else {
-      match jv.parse_into_errors(trimmed) {
-        Err(_) => acc,
-        Ok(j) => list.concat(acc, parse_chunk(j)),
+# ── Response parsing ──────────────────────────────────────────────────────────
+# The multi-region endpoint (aiplatform.eu.rep.googleapis.com) returns a JSON
+# array: [{...}, {...}]. The legacy regional endpoint returns NDJSON (one object
+# per line). We detect by trying to parse the whole body as JSON first.
+fn parse_stream(body :: Str) -> Iter[d.Delta] {
+  let deltas := match jv.parse_into_errors(body) {
+    Ok(JList(chunks)) => list.fold(chunks, [], fn (acc :: List[d.Delta], chunk :: jv.Json) -> List[d.Delta] {
+      list.concat(acc, parse_chunk(chunk))
+    }),
+    _ => list.fold(str.split(body, "\n"), [], fn (acc :: List[d.Delta], line :: Str) -> List[d.Delta] {
+      let trimmed := str.trim(line)
+      if str.is_empty(trimmed) {
+        acc
+      } else {
+        match jv.parse_into_errors(trimmed) {
+          Err(_) => acc,
+          Ok(j) => list.concat(acc, parse_chunk(j)),
+        }
       }
-    }
-  })
+    }),
+  }
   iter.from_list(deltas)
 }
 
