@@ -145,8 +145,14 @@ fn encode_content(m :: msg.Message) -> jv.Json {
 # The multi-region endpoint (aiplatform.eu.rep.googleapis.com) returns a JSON
 # array: [{...}, {...}]. The legacy regional endpoint returns NDJSON (one object
 # per line). We detect by trying to parse the whole body as JSON first.
+#
+# Gemini 3.5 Flash on the EU endpoint omits finishReason from all chunks.
+# Without a FinishDelta the agent loop's collect_response never flips
+# finish_reason to "tool_calls", so tool calls are silently dropped and content
+# comes back empty. We append a synthetic FinishDelta("stop") when none was
+# emitted; collect_response then detects any accumulated tool calls correctly.
 fn parse_stream(body :: Str) -> Iter[d.Delta] {
-  let deltas := match jv.parse_into_errors(body) {
+  let raw := match jv.parse_into_errors(body) {
     Ok(JList(chunks)) => list.fold(chunks, [], fn (acc :: List[d.Delta], chunk :: jv.Json) -> List[d.Delta] {
       list.concat(acc, parse_chunk(chunk))
     }),
@@ -162,7 +168,17 @@ fn parse_stream(body :: Str) -> Iter[d.Delta] {
       }
     }),
   }
-  iter.from_list(deltas)
+  let has_finish := list.fold(raw, false, fn (acc :: Bool, dl :: d.Delta) -> Bool {
+    match dl {
+      FinishDelta(_) => true,
+      _ => acc,
+    }
+  })
+  iter.from_list(if has_finish {
+    raw
+  } else {
+    list.concat(raw, [FinishDelta("stop")])
+  })
 }
 
 fn parse_chunk(j :: jv.Json) -> List[d.Delta] {
@@ -197,23 +213,23 @@ fn parse_parts(content :: jv.Json) -> List[d.Delta] {
 }
 
 fn parse_part(part :: jv.Json) -> List[d.Delta] {
-  match jv.get_field(part, "text") {
-    Some(JStr(s)) => if str.is_empty(s) {
-      []
-    } else {
-      [TextChunk(s)]
+  match jv.get_field(part, "functionCall") {
+    Some(fc) => {
+      let name := str_field(fc, "name")
+      let id := str.concat("call_", name)
+      let args := match jv.get_field(fc, "args") {
+        Some(aj) => jv.stringify(aj),
+        None => "{}",
+      }
+      [ToolCallBegin(id, name), ToolArgChunk(id, args)]
     },
-    _ => match jv.get_field(part, "functionCall") {
-      Some(fc) => {
-        let name := str_field(fc, "name")
-        let id := str.concat("call_", name)
-        let args := match jv.get_field(fc, "args") {
-          Some(aj) => jv.stringify(aj),
-          None => "{}",
-        }
-        [ToolCallBegin(id, name), ToolArgChunk(id, args)]
+    None => match jv.get_field(part, "text") {
+      Some(JStr(s)) => if str.is_empty(s) {
+        []
+      } else {
+        [TextChunk(s)]
       },
-      None => [],
+      _ => [],
     },
   }
 }

@@ -109,7 +109,62 @@ fn to_anthropic_json(tool :: Tool) -> jv.Json {
 }
 
 # Google Gemini function declaration: { name, description, parameters }
+# Vertex AI requires uppercase type names (STRING, INTEGER, OBJECT, ARRAY, BOOLEAN)
+# and no $schema key — different from standard JSON Schema used by Anthropic/OpenAI.
 fn to_google_json(tool :: Tool) -> jv.Json {
-  JObj([("name", JStr(tool.name)), ("description", JStr(tool.description)), ("parameters", s.to_json_schema(tool.params))])
+  JObj([("name", JStr(tool.name)), ("description", JStr(tool.description)), ("parameters", schema_to_google(tool.params))])
+}
+
+fn schema_to_google(schema :: s.ModelSchema) -> jv.Json {
+  let props := list.map(schema.fields, fn (field :: s.Field) -> (Str, jv.Json) {
+    (field.name, field_kind_to_google(field))
+  })
+  let required := list.fold(schema.fields, [], fn (acc :: List[jv.Json], field :: s.Field) -> List[jv.Json] {
+    if field.required {
+      list.concat(acc, [JStr(field.name)])
+    } else {
+      acc
+    }
+  })
+  if list.is_empty(required) {
+    JObj([("type", JStr("OBJECT")), ("properties", JObj(props))])
+  } else {
+    JObj([("type", JStr("OBJECT")), ("properties", JObj(props)), ("required", JList(required))])
+  }
+}
+
+fn field_kind_to_google(field :: s.Field) -> jv.Json {
+  let base_entries := kind_entries(field.kind)
+  if str.is_empty(field.description) {
+    JObj(base_entries)
+  } else {
+    JObj(list.concat(base_entries, [("description", JStr(field.description))]))
+  }
+}
+
+fn kind_entries(kind :: s.FieldKind) -> List[(Str, jv.Json)] {
+  match kind {
+    KStr(_) => [("type", JStr("STRING"))],
+    KInt(_) => [("type", JStr("INTEGER"))],
+    KBool => [("type", JStr("BOOLEAN"))],
+    KArray(elem, _) => [("type", JStr("ARRAY")), ("items", JObj(kind_entries(elem)))],
+    KObject(sub) => {
+      let props := list.map(sub.fields, fn (field :: s.Field) -> (Str, jv.Json) {
+        (field.name, field_kind_to_google(field))
+      })
+      let required := list.fold(sub.fields, [], fn (acc :: List[jv.Json], field :: s.Field) -> List[jv.Json] {
+        if field.required {
+          list.concat(acc, [JStr(field.name)])
+        } else {
+          acc
+        }
+      })
+      if list.is_empty(required) {
+        [("type", JStr("OBJECT")), ("properties", JObj(props))]
+      } else {
+        [("type", JStr("OBJECT")), ("properties", JObj(props)), ("required", JList(required))]
+      }
+    },
+  }
 }
 
