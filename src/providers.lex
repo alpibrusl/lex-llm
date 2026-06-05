@@ -22,6 +22,8 @@ import "./providers/ollama" as olla
 
 import "./providers/mistral" as mist
 
+import "./providers/vertex" as vtx
+
 import "std.env" as env
 
 fn get_key(var_name :: Str) -> [env] Str {
@@ -45,6 +47,22 @@ fn google() -> [env] prov.Provider {
 
 fn mistral() -> [env] prov.Provider {
   mist.make_provider(mist.default_config(get_key("MISTRAL_API_KEY")))
+}
+
+fn mistral_with_key(api_key :: Str) -> prov.Provider {
+  mist.make_provider(mist.default_config(api_key))
+}
+
+fn anthropic_with_key(api_key :: Str) -> prov.Provider {
+  anth.make_provider(anth.default_config(api_key))
+}
+
+fn openai_with_key(api_key :: Str) -> prov.Provider {
+  oai.make_provider(oai.default_config(api_key))
+}
+
+fn google_with_key(api_key :: Str) -> prov.Provider {
+  goog.make_provider(goog.default_config(api_key))
 }
 
 fn ollama_local() -> prov.Provider {
@@ -82,5 +100,26 @@ fn vllm_local() -> [env] prov.Provider {
 
 fn vllm_at(host :: Str) -> prov.Provider {
   oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions") })
+}
+
+# ── Vertex AI (Gemini via Google Cloud regional endpoint) ─────────────────────
+# Reads VERTEX_API_KEY, VERTEX_PROJECT, VERTEX_LOCATION from environment.
+# Default location: europe-west1 (EU).
+fn vertex() -> [env] prov.Provider {
+  let api_key := get_key("VERTEX_API_KEY")
+  let project := get_key("VERTEX_PROJECT")
+  let location := match env.get("VERTEX_LOCATION") {
+    None => "europe-west1",
+    Some(l) => if str.is_empty(l) {
+      "europe-west1"
+    } else {
+      l
+    },
+  }
+  vtx.make_provider(vtx.config_at(api_key, project, location))
+}
+
+fn vertex_with_config(api_key :: Str, project_id :: Str, location :: Str) -> prov.Provider {
+  vtx.make_provider(vtx.config_at(api_key, project_id, location))
 }
 
