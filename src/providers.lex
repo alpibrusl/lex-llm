@@ -102,17 +102,17 @@ fn vllm_at(host :: Str) -> prov.Provider {
   oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions") })
 }
 
-# ── Vertex AI (Gemini via Google Cloud regional endpoint) ─────────────────────
+# ── Vertex AI (Gemini via Google Cloud multi-region endpoint) ─────────────────
 # Reads VERTEX_ACCESS_TOKEN, VERTEX_PROJECT, VERTEX_LOCATION from environment.
 # VERTEX_ACCESS_TOKEN = output of `gcloud auth print-access-token`.
-# Default location: europe-west1 (EU).
+# Default location: eu (aiplatform.eu.rep.googleapis.com).
 fn vertex() -> [env] prov.Provider {
   let token := get_key("VERTEX_ACCESS_TOKEN")
   let project := get_key("VERTEX_PROJECT")
   let location := match env.get("VERTEX_LOCATION") {
-    None => "europe-west1",
+    None => "eu",
     Some(l) => if str.is_empty(l) {
-      "europe-west1"
+      "eu"
     } else {
       l
     },

@@ -44,7 +44,7 @@ import "std.iter" as iter
 type VertexConfig = { access_token :: Str, project_id :: Str, location :: Str }
 
 fn default_config(access_token :: Str, project_id :: Str) -> VertexConfig {
-  { access_token: access_token, project_id: project_id, location: "europe-west1" }
+  { access_token: access_token, project_id: project_id, location: "eu" }
 }
 
 fn config_at(access_token :: Str, project_id :: Str, location :: Str) -> VertexConfig {
@@ -54,8 +54,18 @@ fn config_at(access_token :: Str, project_id :: Str, location :: Str) -> VertexC
 # ── URL builder ───────────────────────────────────────────────────────────────
 # Uses ?access_token= query param — Google APIs accept OAuth2 tokens this way,
 # which avoids needing custom HTTP headers (std.http.post has no header support).
+#
+# Multi-region codes ("eu", "us", "global") use the .rep.googleapis.com endpoint:
+#   https://aiplatform.eu.rep.googleapis.com/v1/projects/.../locations/eu/...
+# Regional codes ("europe-west1", etc.) use the legacy regional endpoint:
+#   https://europe-west1-aiplatform.googleapis.com/v1/projects/.../locations/europe-west1/...
 fn vertex_url(cfg :: VertexConfig, model :: Str) -> Str {
-  str.join(["https://", cfg.location, "-aiplatform.googleapis.com/v1/projects/", cfg.project_id, "/locations/", cfg.location, "/publishers/google/models/", model, ":streamGenerateContent?access_token=", cfg.access_token], "")
+  match cfg.location {
+    "eu" => str.join(["https://aiplatform.eu.rep.googleapis.com/v1/projects/", cfg.project_id, "/locations/eu/publishers/google/models/", model, ":streamGenerateContent?access_token=", cfg.access_token], ""),
+    "us" => str.join(["https://aiplatform.us.rep.googleapis.com/v1/projects/", cfg.project_id, "/locations/us/publishers/google/models/", model, ":streamGenerateContent?access_token=", cfg.access_token], ""),
+    "global" => str.join(["https://aiplatform.googleapis.com/v1/projects/", cfg.project_id, "/locations/global/publishers/google/models/", model, ":streamGenerateContent?access_token=", cfg.access_token], ""),
+    loc => str.join(["https://", loc, "-aiplatform.googleapis.com/v1/projects/", cfg.project_id, "/locations/", loc, "/publishers/google/models/", model, ":streamGenerateContent?access_token=", cfg.access_token], ""),
+  }
 }
 
 # ── Provider factory ──────────────────────────────────────────────────────────
