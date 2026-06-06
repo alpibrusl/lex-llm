@@ -4,6 +4,6 @@ version     = "0.2.0"
 description = "Pure-Lex LLM-agent runtime — provider abstraction, tool-call loop, structured-output validation, and lex-spec permission gating."
 
 [dependencies]
-"lex-schema" = { path = "../lex-schema" }
-"lex-spec"   = { path = "../lex-spec" }
-"lex-trail"  = { path = "../lex-trail" }
+lex-schema = { git = "https://github.com/alpibrusl/lex-schema" }
+lex-spec   = { git = "https://github.com/alpibrusl/lex-spec" }
+lex-trail  = { git = "https://github.com/alpibrusl/lex-trail" }

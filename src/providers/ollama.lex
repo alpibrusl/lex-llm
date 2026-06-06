@@ -16,8 +16,6 @@ import "../tool" as t
 
 import "../provider" as prov
 
-import "../sse" as sse
-
 import "lex-schema/json_value" as jv
 
 import "std.http" as http
@@ -29,6 +27,8 @@ import "std.list" as list
 import "std.str" as str
 
 import "std.iter" as iter
+
+import "std.map" as map
 
 fn default_base_url() -> Str {
   "http://localhost:11434/api/chat"
@@ -52,24 +52,25 @@ fn make_provider(config :: OllamaConfig) -> prov.Provider {
 
 fn chat(config :: OllamaConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let body := build_request(model, messages, tools)
-  let raw_lines := match http.post(config.base_url, bytes.from_str(body), "application/json") {
-    Err(_) => iter.from_list([]),
-    Ok(r) => iter.from_list(str.split(match bytes.to_str(r.body) {
-      Err(_) => "",
-      Ok(s) => s,
-    }, "\n")),
+  let hdrs := map.set(map.set(map.new(), "content-type", "application/json"), "connection", "close")
+  let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(120000) }
+  let lines := match http.send(req) {
+    Err(_) => [],
+    Ok(r) => if r.status >= 400 {
+      []
+    } else {
+      match bytes.to_str(r.body) {
+        Err(_) => [],
+        Ok(s) => str.split(s, "\n"),
+      }
+    },
   }
-  let lines := iter.to_list(raw_lines)
   parse_stream(lines)
 }
 
 # ---- Request building --------------------------------------------
 fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
-  let streaming := if str.starts_with(model.model, "qwen3") {
-    false
-  } else {
-    true
-  }
+  let streaming := false
   let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(streaming))]
   let with_tools := if list.is_empty(tools) {
     base
@@ -93,7 +94,7 @@ fn encode_message(m :: msg.Message) -> jv.Json {
 }
 
 fn encode_tool_call(call :: msg.ToolCall) -> jv.Json {
-  JObj([("id", JStr(call.id)), ("type", JStr("function")), ("function", JObj([("name", JStr(call.name)), ("arguments", JStr(jv.stringify(call.args)))]))])
+  JObj([("id", JStr(call.id)), ("type", JStr("function")), ("function", JObj([("name", JStr(call.name)), ("arguments", call.args)]))])
 }
 
 # ---- Response parsing --------------------------------------------
