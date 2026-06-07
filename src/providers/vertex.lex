@@ -68,6 +68,15 @@ fn vertex_url(cfg :: VertexConfig, model :: Str) -> Str {
   }
 }
 
+# ── Model refs ───────────────────────────────────────────────────────────────
+fn gemini_35_flash() -> prov.ModelRef {
+  { provider: "vertex", model: "gemini-3.5-flash" }
+}
+
+fn gemini_35_pro() -> prov.ModelRef {
+  { provider: "vertex", model: "gemini-3.5-pro" }
+}
+
 # ── Provider factory ──────────────────────────────────────────────────────────
 fn make_provider(config :: VertexConfig) -> prov.Provider {
   { name: "vertex", chat: fn (model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
