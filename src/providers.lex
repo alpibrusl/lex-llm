@@ -121,6 +121,36 @@ fn mlx_at(host :: Str) -> prov.Provider {
   oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions") })
 }
 
+# ── LiteLLM proxy (OpenAI-compatible, routes to any backend) ─────────────────
+# Run LiteLLM with: docker run -p 4000:4000 ghcr.io/berriai/litellm --config config.yaml
+# Set LITELLM_BASE_URL to override the default localhost:4000 endpoint.
+# Set LITELLM_API_KEY if your LiteLLM deployment requires a master key.
+fn litellm() -> [env] prov.Provider {
+  let base := match env.get("LITELLM_BASE_URL") {
+    None => "http://localhost:4000",
+    Some(u) => if str.is_empty(u) { "http://localhost:4000" } else { u },
+  }
+  let url := if str.contains(base, "/v1") {
+    base
+  } else {
+    str.concat(base, "/v1/chat/completions")
+  }
+  let api_key := match env.get("LITELLM_API_KEY") {
+    None => "",
+    Some(k) => k,
+  }
+  oai.make_provider({ api_key: api_key, base_url: url })
+}
+
+fn litellm_at(base_url :: Str) -> prov.Provider {
+  let url := if str.contains(base_url, "/v1") {
+    base_url
+  } else {
+    str.concat(base_url, "/v1/chat/completions")
+  }
+  oai.make_provider({ api_key: "", base_url: url })
+}
+
 # ── Vertex AI (Gemini via Google Cloud multi-region endpoint) ─────────────────
 # Reads VERTEX_ACCESS_TOKEN, VERTEX_PROJECT, VERTEX_LOCATION from environment.
 # VERTEX_ACCESS_TOKEN = output of `gcloud auth print-access-token`.
