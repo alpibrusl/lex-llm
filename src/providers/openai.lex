@@ -68,7 +68,11 @@ fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Mes
 
 # ---- Request building --------------------------------------------
 fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
-  let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(false))]
+  # Bound generation so a runaway (e.g. a reasoning model that never stops
+  # thinking) cannot hit the server's open-ended default and return
+  # finish_reason "length" with empty content. 2048 is ample for a tool call or
+  # a concise operational reply.
+  let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(false)), ("max_tokens", JInt(2048))]
   let with_tools := if list.is_empty(tools) {
     base
   } else {
@@ -133,15 +137,99 @@ fn parse_message_obj(mj :: jv.Json) -> List[d.Delta] {
   }
 }
 
-fn parse_content_field(mj :: jv.Json) -> List[d.Delta] {
-  match jv.get_field(mj, "content") {
-    Some(JStr(s)) => if str.is_empty(s) {
-      []
-    } else {
-      [TextChunk(s)]
-    },
-    _ => [],
+# Fall back to the `reasoning` field (reasoning models put their chain-of-thought
+# there and leave `content` empty/null) so we surface something rather than an
+# empty turn. Bounded by max_tokens in build_request.
+fn content_or_reasoning(mj :: jv.Json) -> Str {
+  let c := match jv.get_field(mj, "content") {
+    Some(JStr(s)) => s,
+    _ => "",
   }
+  if str.is_empty(str.trim(c)) {
+    match jv.get_field(mj, "reasoning") {
+      Some(JStr(r)) => r,
+      _ => c,
+    }
+  } else {
+    c
+  }
+}
+
+fn parse_content_field(mj :: jv.Json) -> List[d.Delta] {
+  let s := content_or_reasoning(mj)
+  if str.is_empty(s) {
+    []
+  } else {
+    # Some OpenAI-compatible servers (notably mlx_lm.server with Qwen-Coder
+    # templates) do NOT parse tool calls into the `tool_calls` field — the
+    # model emits a fenced ```json {"name","arguments"} block (sometimes with a
+    # leaked <|im_end|>) in `content` instead. Recover it as a real tool call so
+    # the agent loop dispatches it rather than echoing JSON at the user.
+    match content_tool_call(s) {
+      Some(deltas) => deltas,
+      None => {
+        let cleaned := clean_eos(s)
+        if str.is_empty(str.trim(cleaned)) {
+          []
+        } else {
+          [TextChunk(cleaned)]
+        }
+      },
+    }
+  }
+}
+
+# Try to extract a single {"name":..,"arguments":..} tool call embedded in the
+# assistant's text content. Returns None unless BOTH keys are present (so prose
+# that merely contains a JSON snippet is not misread as a tool call).
+fn content_tool_call(content :: Str) -> Option[List[d.Delta]] {
+  let candidate := strip_tool_markers(content)
+  if str.starts_with(candidate, "{") {
+    match jv.parse_into_errors(candidate) {
+      Err(_) => None,
+      Ok(j) => match jv.get_field(j, "name") {
+        Some(JStr(name)) => if str.is_empty(name) {
+          None
+        } else {
+          match jv.get_field(j, "arguments") {
+            None => None,
+            Some(aj) => {
+              let args := match aj {
+                JStr(s) => s,
+                _ => jv.stringify(aj),
+              }
+              let id := str.concat("call_", name)
+              Some([ToolCallBegin(id, name), ToolArgChunk(id, args)])
+            },
+          }
+        },
+        _ => None,
+      },
+    }
+  } else {
+    None
+  }
+}
+
+# Some OpenAI-compatible servers (mlx_lm.server) leak the chat-template EOS
+# token into the visible content. Strip the common ones so they never reach the
+# user-facing reply.
+fn clean_eos(s :: Str) -> Str {
+  let a := str.join(str.split(s, "<|im_end|>"), "")
+  let b := str.join(str.split(a, "<|endoftext|>"), "")
+  let c := str.join(str.split(b, "<|eot_id|>"), "")
+  str.trim(c)
+}
+
+# Remove the markdown fence / chat-template tokens that wrap a content-embedded
+# tool call, leaving (hopefully) a bare JSON object to parse.
+fn strip_tool_markers(s :: Str) -> Str {
+  let a := str.join(str.split(s, "```json"), "")
+  let b := str.join(str.split(a, "```"), "")
+  let c := str.join(str.split(b, "<|im_end|>"), "")
+  let dd := str.join(str.split(c, "<tool_call>"), "")
+  let ee := str.join(str.split(dd, "</tool_call>"), "")
+  str.trim(ee)
 }
 
 fn parse_tool_calls_full(calls :: List[jv.Json]) -> List[d.Delta] {

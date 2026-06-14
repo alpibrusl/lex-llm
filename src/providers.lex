@@ -12,6 +12,8 @@ import "./provider" as prov
 
 import "std.str" as str
 
+import "std.list" as list
+
 import "./providers/anthropic" as anth
 
 import "./providers/openai" as oai
@@ -102,6 +104,23 @@ fn vllm_at(host :: Str) -> prov.Provider {
   oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions") })
 }
 
+# ── MLX (Apple Silicon) ───────────────────────────────────────────────────────
+# mlx_lm.server exposes an OpenAI-compatible POST /v1/chat/completions endpoint
+# with tool-calling support, so the OpenAI adapter drives it unchanged. Runs on
+# the host (needs Metal — cannot run inside a Linux container); reach it via
+# host.docker.internal. Model name must match what mlx_lm.server was started with
+# (e.g. mlx-community/Qwen2.5-Coder-7B-Instruct-4bit).
+fn mlx_model() -> [env] Str {
+  match env.get("MLX_MODEL") {
+    None => "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    Some(m) => m,
+  }
+}
+
+fn mlx_at(host :: Str) -> prov.Provider {
+  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions") })
+}
+
 # ── Vertex AI (Gemini via Google Cloud multi-region endpoint) ─────────────────
 # Reads VERTEX_ACCESS_TOKEN, VERTEX_PROJECT, VERTEX_LOCATION from environment.
 # VERTEX_ACCESS_TOKEN = output of `gcloud auth print-access-token`.
@@ -122,5 +141,55 @@ fn vertex() -> [env] prov.Provider {
 
 fn vertex_with_config(access_token :: Str, project_id :: Str, location :: Str) -> prov.Provider {
   vtx.make_provider(vtx.config_at(access_token, project_id, location))
+}
+
+# ── Canonical provider selector ───────────────────────────────────────────────
+# Build a Provider from a (name, url, key) triple. This is the SHARED selector so
+# every agent runner / app (lex-soft consumers, lex-ev-fleet, …) wires providers
+# the same way instead of copy-pasting the mapping. Agent runners that carry
+# provider_name/provider_url/provider_key (e.g. lex-soft AgentConfig) pass them
+# straight through.
+#
+#   name  : "mlx" | "ollama" | "vllm" | "openai" | "anthropic" | "google" |
+#           "mistral" | "vertex" (any other value → vertex).
+#   url   : base URL/host for local & OpenAI-compatible servers (mlx/ollama/vllm);
+#           the Vertex location for "vertex"; ignored by cloud-key providers.
+#   key   : API key for cloud providers; for "vertex" it is the packed
+#           "<access_token>|||<project_id>"; ignored for local providers.
+fn select_provider(name :: Str, url :: Str, key :: Str) -> prov.Provider {
+  if name == "mlx" {
+    mlx_at(url)
+  } else {
+  if name == "ollama" {
+    ollama_at(url)
+  } else {
+  if name == "vllm" {
+    vllm_at(url)
+  } else {
+  if name == "openai" {
+    openai_with_key(key)
+  } else {
+  if name == "anthropic" {
+    anthropic_with_key(key)
+  } else {
+  if name == "google" {
+    google_with_key(key)
+  } else {
+  if name == "mistral" {
+    mistral_with_key(key)
+  } else {
+    # vertex (default): key is "<access_token>|||<project_id>", url is location.
+    let parts := str.split(key, "|||")
+    let token := match list.head(parts) { Some(s) => s, None => "" }
+    let project := match str.strip_prefix(key, str.concat(token, "|||")) { Some(s) => s, None => "" }
+    let location := if str.is_empty(url) { "eu" } else { url }
+    vertex_with_config(token, project, location)
+  }
+  }
+  }
+  }
+  }
+  }
+  }
 }
 

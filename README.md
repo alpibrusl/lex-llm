@@ -81,6 +81,21 @@ lex run --allow-effects net,llm main.lex main '"sk-ant-..."'
 | `lex-llm/providers/anthropic` | `make_provider(default_config(api_key))` | claude-opus-4-7, claude-sonnet-4-6, … |
 | `lex-llm/providers/google` | `make_provider({ api_key: key })` | gemini-2.0-flash, gemini-2.5-pro, … |
 | `lex-llm/providers/ollama` | `make_provider(default_config())` | llama3, mistral, qwen2, … (local) |
+| `lex-llm/providers/vertex` | `make_provider(config_at(token, project, location))` | gemini-3.5-flash, … (Vertex AI, EU) |
+
+OpenAI-compatible local servers reuse the `openai` adapter via convenience
+factories in `lex-llm/providers`:
+
+| Server | Constructor | Notes |
+|---|---|---|
+| vLLM | `providers.vllm_at(host)` | host → `host + /v1/chat/completions` |
+| MLX (Apple Silicon) | `providers.mlx_at(host)` | `mlx_lm.server`, run with `--host 0.0.0.0`; e.g. `mlx-community/Qwen2.5-7B-Instruct-4bit` |
+
+`providers.select_provider(name, url, key)` builds any of the above from a
+`(name, url, key)` triple — `name` ∈ `mlx | ollama | vllm | openai | anthropic |
+google | mistral | vertex` (vertex packs `key` as `"<access_token>|||<project>"`).
+The OpenAI adapter tolerates content-embedded tool calls (fenced ```json),
+leaked EOS tokens, and reasoning-only turns so local servers work out of the box.
 
 Convenience model refs: `prov.gpt4o()`, `prov.claude_sonnet()`,
 `prov.gemini_flash()`, `prov.ollama("llama3")`.

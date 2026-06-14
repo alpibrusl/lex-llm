@@ -32,6 +32,8 @@ import "std.http" as http
 
 import "std.bytes" as bytes
 
+import "std.map" as map
+
 import "std.list" as list
 
 import "std.str" as str
@@ -52,8 +54,9 @@ fn config_at(access_token :: Str, project_id :: Str, location :: Str) -> VertexC
 }
 
 # ── URL builder ───────────────────────────────────────────────────────────────
-# Uses ?access_token= query param — Google APIs accept OAuth2 tokens this way,
-# which avoids needing custom HTTP headers (std.http.post has no header support).
+# The OAuth2 token goes in the `Authorization: Bearer` header (see chat()).
+# Google rejects the `?access_token=` query param for streamGenerateContent
+# (HTTP 401 ACCESS_TOKEN_TYPE_UNSUPPORTED), so the URL carries no token.
 #
 # Multi-region codes ("eu", "us", "global") use the .rep.googleapis.com endpoint:
 #   https://aiplatform.eu.rep.googleapis.com/v1/projects/.../locations/eu/...
@@ -61,10 +64,10 @@ fn config_at(access_token :: Str, project_id :: Str, location :: Str) -> VertexC
 #   https://europe-west1-aiplatform.googleapis.com/v1/projects/.../locations/europe-west1/...
 fn vertex_url(cfg :: VertexConfig, model :: Str) -> Str {
   match cfg.location {
-    "eu" => str.join(["https://aiplatform.eu.rep.googleapis.com/v1/projects/", cfg.project_id, "/locations/eu/publishers/google/models/", model, ":streamGenerateContent?access_token=", cfg.access_token], ""),
-    "us" => str.join(["https://aiplatform.us.rep.googleapis.com/v1/projects/", cfg.project_id, "/locations/us/publishers/google/models/", model, ":streamGenerateContent?access_token=", cfg.access_token], ""),
-    "global" => str.join(["https://aiplatform.googleapis.com/v1/projects/", cfg.project_id, "/locations/global/publishers/google/models/", model, ":streamGenerateContent?access_token=", cfg.access_token], ""),
-    loc => str.join(["https://", loc, "-aiplatform.googleapis.com/v1/projects/", cfg.project_id, "/locations/", loc, "/publishers/google/models/", model, ":streamGenerateContent?access_token=", cfg.access_token], ""),
+    "eu" => str.join(["https://aiplatform.eu.rep.googleapis.com/v1/projects/", cfg.project_id, "/locations/eu/publishers/google/models/", model, ":streamGenerateContent"], ""),
+    "us" => str.join(["https://aiplatform.us.rep.googleapis.com/v1/projects/", cfg.project_id, "/locations/us/publishers/google/models/", model, ":streamGenerateContent"], ""),
+    "global" => str.join(["https://aiplatform.googleapis.com/v1/projects/", cfg.project_id, "/locations/global/publishers/google/models/", model, ":streamGenerateContent"], ""),
+    loc => str.join(["https://", loc, "-aiplatform.googleapis.com/v1/projects/", cfg.project_id, "/locations/", loc, "/publishers/google/models/", model, ":streamGenerateContent"], ""),
   }
 }
 
@@ -87,7 +90,9 @@ fn make_provider(config :: VertexConfig) -> prov.Provider {
 fn chat(config :: VertexConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let url := vertex_url(config, model.model)
   let body := build_request(messages, tools)
-  let body_str := match http.post(url, bytes.from_str(body), "application/json") {
+  # OAuth2 token via Authorization: Bearer header (the supported method).
+  let req := http.with_header(http.with_header({ method: "POST", url: url, headers: map.new(), body: Some(bytes.from_str(body)), timeout_ms: Some(60000) }, "Content-Type", "application/json"), "Authorization", str.concat("Bearer ", config.access_token))
+  let body_str := match http.send(req) {
     Err(_) => "",
     Ok(r) => match bytes.to_str(r.body) {
       Err(_) => "",

@@ -155,13 +155,31 @@ fn parse_chunk(j :: jv.Json) -> List[d.Delta] {
 }
 
 fn parse_assistant_message(mj :: jv.Json) -> List[d.Delta] {
-  let content := match jv.get_field(mj, "content") {
+  let raw_content := match jv.get_field(mj, "content") {
     Some(JStr(s)) => s,
     _ => "",
   }
   let call_deltas := match jv.get_field(mj, "tool_calls") {
     Some(JList(calls)) => parse_tool_calls(calls),
-    _ => parse_xml_tool_calls(content),
+    _ => parse_xml_tool_calls(raw_content),
+  }
+  # Reasoning models (deepseek-r1, gemma, qwen3 with thinking) sometimes return
+  # their entire answer in a separate `thinking` field and leave `content` empty.
+  # When there is no tool call to make and no visible content, fall back to the
+  # thinking text rather than emitting an empty turn (which the agent loop would
+  # otherwise surface as "the model returned nothing usable").
+  let thinking := match jv.get_field(mj, "thinking") {
+    Some(JStr(s)) => s,
+    _ => "",
+  }
+  let content := if str.is_empty(str.trim(raw_content)) {
+    if list.is_empty(call_deltas) {
+      thinking
+    } else {
+      raw_content
+    }
+  } else {
+    raw_content
   }
   let trimmed_content := str.trim(content)
   let is_xml := if str.starts_with(trimmed_content, "<function=") {
