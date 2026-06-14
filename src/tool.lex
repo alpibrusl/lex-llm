@@ -146,6 +146,7 @@ fn kind_entries(kind :: s.FieldKind) -> List[(Str, jv.Json)] {
   match kind {
     KStr(_) => [("type", JStr("STRING"))],
     KInt(_) => [("type", JStr("INTEGER"))],
+    KFloat(_) => [("type", JStr("NUMBER"))],
     KBool => [("type", JStr("BOOLEAN"))],
     KArray(elem, _) => [("type", JStr("ARRAY")), ("items", JObj(kind_entries(elem)))],
     KObject(sub) => {
