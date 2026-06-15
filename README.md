@@ -1,5 +1,9 @@
 # lex-llm
 
+[![CI](https://github.com/alpibrusl/lex-llm/actions/workflows/ci.yml/badge.svg)](https://github.com/alpibrusl/lex-llm/actions/workflows/ci.yml)
+
+**Part of the [Lex](https://lexlang.org) project** — Library · [Manifesto](https://lexlang.org/manifesto) · [All packages](https://lexlang.org)
+
 Pure-Lex LLM-agent runtime. Provider abstraction, multi-step tool-call
 loop, and schema-validated structured output — no Rust, no dependencies
 beyond [lex-schema](https://github.com/alpibrusl/lex-schema).
