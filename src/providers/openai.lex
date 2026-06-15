@@ -68,10 +68,6 @@ fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Mes
 
 # ---- Request building --------------------------------------------
 fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
-  # Bound generation so a runaway (e.g. a reasoning model that never stops
-  # thinking) cannot hit the server's open-ended default and return
-  # finish_reason "length" with empty content. 2048 is ample for a tool call or
-  # a concise operational reply.
   let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(false)), ("max_tokens", JInt(2048))]
   let with_tools := if list.is_empty(tools) {
     base
@@ -160,11 +156,6 @@ fn parse_content_field(mj :: jv.Json) -> List[d.Delta] {
   if str.is_empty(s) {
     []
   } else {
-    # Some OpenAI-compatible servers (notably mlx_lm.server with Qwen-Coder
-    # templates) do NOT parse tool calls into the `tool_calls` field — the
-    # model emits a fenced ```json {"name","arguments"} block (sometimes with a
-    # leaked <|im_end|>) in `content` instead. Recover it as a real tool call so
-    # the agent loop dispatches it rather than echoing JSON at the user.
     match content_tool_call(s) {
       Some(deltas) => deltas,
       None => {

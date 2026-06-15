@@ -163,11 +163,6 @@ fn parse_assistant_message(mj :: jv.Json) -> List[d.Delta] {
     Some(JList(calls)) => parse_tool_calls(calls),
     _ => parse_xml_tool_calls(raw_content),
   }
-  # Reasoning models (deepseek-r1, gemma, qwen3 with thinking) sometimes return
-  # their entire answer in a separate `thinking` field and leave `content` empty.
-  # When there is no tool call to make and no visible content, fall back to the
-  # thinking text rather than emitting an empty turn (which the agent loop would
-  # otherwise surface as "the model returned nothing usable").
   let thinking := match jv.get_field(mj, "thinking") {
     Some(JStr(s)) => s,
     _ => "",

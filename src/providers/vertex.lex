@@ -90,7 +90,6 @@ fn make_provider(config :: VertexConfig) -> prov.Provider {
 fn chat(config :: VertexConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let url := vertex_url(config, model.model)
   let body := build_request(messages, tools)
-  # OAuth2 token via Authorization: Bearer header (the supported method).
   let req := http.with_header(http.with_header({ method: "POST", url: url, headers: map.new(), body: Some(bytes.from_str(body)), timeout_ms: Some(60000) }, "Content-Type", "application/json"), "Authorization", str.concat("Bearer ", config.access_token))
   let body_str := match http.send(req) {
     Err(_) => "",
@@ -145,8 +144,14 @@ fn encode_messages(messages :: List[msg.Message]) -> (Option[Str], List[jv.Json]
 fn thought_sig_from_id(call_id :: Str) -> Str {
   if str.contains(call_id, "|||") {
     let parts := str.split(call_id, "|||")
-    let base := match list.head(parts) { Some(s) => s, None => "" }
-    match str.strip_prefix(call_id, str.concat(base, "|||")) { Some(ts) => ts, None => "" }
+    let base := match list.head(parts) {
+      Some(s) => s,
+      None => "",
+    }
+    match str.strip_prefix(call_id, str.concat(base, "|||")) {
+      Some(ts) => ts,
+      None => "",
+    }
   } else {
     ""
   }
@@ -156,11 +161,17 @@ fn thought_sig_from_id(call_id :: Str) -> Str {
 fn fn_name_from_id(call_id :: Str) -> Str {
   let base := if str.contains(call_id, "|||") {
     let parts := str.split(call_id, "|||")
-    match list.head(parts) { Some(s) => s, None => call_id }
+    match list.head(parts) {
+      Some(s) => s,
+      None => call_id,
+    }
   } else {
     call_id
   }
-  match str.strip_prefix(base, "call_") { Some(name) => name, None => base }
+  match str.strip_prefix(base, "call_") {
+    Some(name) => name,
+    None => base,
+  }
 }
 
 fn encode_content(m :: msg.Message) -> jv.Json {
@@ -195,7 +206,6 @@ fn encode_content(m :: msg.Message) -> jv.Json {
 # comes back empty. We append a synthetic FinishDelta("stop") when none was
 # emitted; collect_response then detects any accumulated tool calls correctly.
 fn parse_stream(body :: Str) -> Iter[d.Delta] {
-  # Google's JSON encoder HTML-safe-encodes >, <, & — replace before parsing
   let body2 := str.join(str.split(body, "\\u003e"), ">")
   let body3 := str.join(str.split(body2, "\\u003c"), "<")
   let body4 := str.join(str.split(body3, "\\u0026"), "&")

@@ -128,7 +128,11 @@ fn mlx_at(host :: Str) -> prov.Provider {
 fn litellm() -> [env] prov.Provider {
   let base := match env.get("LITELLM_BASE_URL") {
     None => "http://localhost:4000",
-    Some(u) => if str.is_empty(u) { "http://localhost:4000" } else { u },
+    Some(u) => if str.is_empty(u) {
+      "http://localhost:4000"
+    } else {
+      u
+    },
   }
   let url := if str.contains(base, "/v1") {
     base
@@ -190,36 +194,45 @@ fn select_provider(name :: Str, url :: Str, key :: Str) -> prov.Provider {
   if name == "mlx" {
     mlx_at(url)
   } else {
-  if name == "ollama" {
-    ollama_at(url)
-  } else {
-  if name == "vllm" {
-    vllm_at(url)
-  } else {
-  if name == "openai" {
-    openai_with_key(key)
-  } else {
-  if name == "anthropic" {
-    anthropic_with_key(key)
-  } else {
-  if name == "google" {
-    google_with_key(key)
-  } else {
-  if name == "mistral" {
-    mistral_with_key(key)
-  } else {
-    # vertex (default): key is "<access_token>|||<project_id>", url is location.
-    let parts := str.split(key, "|||")
-    let token := match list.head(parts) { Some(s) => s, None => "" }
-    let project := match str.strip_prefix(key, str.concat(token, "|||")) { Some(s) => s, None => "" }
-    let location := if str.is_empty(url) { "eu" } else { url }
-    vertex_with_config(token, project, location)
-  }
-  }
-  }
-  }
-  }
-  }
+    if name == "ollama" {
+      ollama_at(url)
+    } else {
+      if name == "vllm" {
+        vllm_at(url)
+      } else {
+        if name == "openai" {
+          openai_with_key(key)
+        } else {
+          if name == "anthropic" {
+            anthropic_with_key(key)
+          } else {
+            if name == "google" {
+              google_with_key(key)
+            } else {
+              if name == "mistral" {
+                mistral_with_key(key)
+              } else {
+                let parts := str.split(key, "|||")
+                let token := match list.head(parts) {
+                  Some(s) => s,
+                  None => "",
+                }
+                let project := match str.strip_prefix(key, str.concat(token, "|||")) {
+                  Some(s) => s,
+                  None => "",
+                }
+                let location := if str.is_empty(url) {
+                  "eu"
+                } else {
+                  url
+                }
+                vertex_with_config(token, project, location)
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
 
