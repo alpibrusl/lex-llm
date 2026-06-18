@@ -243,13 +243,21 @@ fn empty_response() -> CollectedResponse
 }
 
 fn append_arg_chunk(calls :: List[CollectedCall], id :: Str, chunk :: Str) -> List[CollectedCall] {
-  list.map(calls, fn (c :: CollectedCall) -> CollectedCall {
-    if c.id == id {
-      { id: c.id, name: c.name, args_raw: str.concat(c.args_raw, chunk) }
-    } else {
-      c
+  match list.fold(calls, ([], false), fn (acc :: (List[CollectedCall], Bool), c :: CollectedCall) -> (List[CollectedCall], Bool) {
+    match acc {
+      (lst, found) => if found {
+        (list.concat(lst, [c]), true)
+      } else {
+        if c.id == id {
+          (list.concat(lst, [{ id: c.id, name: c.name, args_raw: str.concat(c.args_raw, chunk) }]), true)
+        } else {
+          (list.concat(lst, [c]), false)
+        }
+      },
     }
-  })
+  }) {
+    (result, _) => result,
+  }
 }
 
 # ---- Tool dispatch -----------------------------------------------
