@@ -30,6 +30,8 @@ import "std.iter" as iter
 
 import "std.map" as map
 
+import "std.int" as int
+
 fn default_base_url() -> Str {
   "http://localhost:11434/api/chat"
 }
@@ -219,30 +221,33 @@ fn parse_xml_tool_calls(content :: Str) -> List[d.Delta] {
   if list.len(func_parts) <= 1 {
     []
   } else {
-    match list.fold(func_parts, (true, []), fn (acc :: (Bool, List[d.Delta]), part :: Str) -> (Bool, List[d.Delta]) {
+    match list.fold(func_parts, (true, 0, []), fn (acc :: (Bool, Int, List[d.Delta]), part :: Str) -> (Bool, Int, List[d.Delta]) {
       let skip := match acc {
-        (b, _) => b,
+        (b, _, _) => b,
+      }
+      let idx := match acc {
+        (_, i, _) => i,
       }
       let deltas := match acc {
-        (_, ds) => ds,
+        (_, _, ds) => ds,
       }
       if skip {
-        (false, deltas)
+        (false, idx, deltas)
       } else {
         let name := str.trim(match list.head(str.split(part, ">")) {
           Some(n) => n,
           None => "",
         })
         if str.is_empty(name) {
-          (false, deltas)
+          (false, idx + 1, deltas)
         } else {
-          let id := str.concat("call_", name)
+          let id := synthetic_tool_call_id(name, idx)
           let args := xml_params_to_json(part)
-          (false, list.concat(deltas, [ToolCallBegin(id, name), ToolArgChunk(id, args)]))
+          (false, idx + 1, list.concat(deltas, [ToolCallBegin(id, name), ToolArgChunk(id, args)]))
         }
       }
     }) {
-      (_, ds) => ds,
+      (_, _, ds) => ds,
     }
   }
 }
@@ -326,9 +331,15 @@ fn str_skip_prefix(s :: Str, prefix :: Str) -> Str {
 }
 
 fn parse_tool_calls(calls :: List[jv.Json]) -> List[d.Delta] {
-  list.fold(calls, [], fn (acc :: List[d.Delta], cj :: jv.Json) -> List[d.Delta] {
+  let folded := list.fold(calls, (0, []), fn (acc :: (Int, List[d.Delta]), cj :: jv.Json) -> (Int, List[d.Delta]) {
+    let idx := match acc {
+      (i, _) => i,
+    }
+    let deltas := match acc {
+      (_, ds) => ds,
+    }
     match jv.get_field(cj, "function") {
-      None => acc,
+      None => (idx + 1, deltas),
       Some(fj) => {
         let name := match jv.get_field(fj, "name") {
           Some(JStr(s)) => s,
@@ -338,11 +349,33 @@ fn parse_tool_calls(calls :: List[jv.Json]) -> List[d.Delta] {
           Some(aj) => jv.stringify(aj),
           None => "{}",
         }
-        let id := str.concat("call_", name)
-        list.concat(acc, [ToolCallBegin(id, name), ToolArgChunk(id, args)])
+        if str.is_empty(name) {
+          (idx + 1, deltas)
+        } else {
+          let id := tool_call_id(cj, name, idx)
+          (idx + 1, list.concat(deltas, [ToolCallBegin(id, name), ToolArgChunk(id, args)]))
+        }
       },
     }
   })
+  match folded {
+    (_, ds) => ds,
+  }
+}
+
+fn tool_call_id(cj :: jv.Json, name :: Str, idx :: Int) -> Str {
+  match jv.get_field(cj, "id") {
+    Some(JStr(id)) => if str.is_empty(id) {
+      synthetic_tool_call_id(name, idx)
+    } else {
+      id
+    },
+    _ => synthetic_tool_call_id(name, idx),
+  }
+}
+
+fn synthetic_tool_call_id(name :: Str, idx :: Int) -> Str {
+  str.concat(str.concat("call_", name), str.concat("_", int.to_str(idx)))
 }
 
 fn finish_reason_from_msg(j :: jv.Json) -> Str {

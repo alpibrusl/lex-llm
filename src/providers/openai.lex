@@ -29,6 +29,8 @@ import "std.iter" as iter
 
 import "std.map" as map
 
+import "std.int" as int
+
 fn default_base_url() -> Str {
   "https://api.openai.com/v1/chat/completions"
 }
@@ -224,27 +226,45 @@ fn strip_tool_markers(s :: Str) -> Str {
 }
 
 fn parse_tool_calls_full(calls :: List[jv.Json]) -> List[d.Delta] {
-  list.fold(calls, [], fn (acc :: List[d.Delta], cj :: jv.Json) -> List[d.Delta] {
+  let folded := list.fold(calls, (0, []), fn (acc :: (Int, List[d.Delta]), cj :: jv.Json) -> (Int, List[d.Delta]) {
+    let idx := match acc {
+      (i, _) => i,
+    }
+    let deltas := match acc {
+      (_, ds) => ds,
+    }
     match jv.get_field(cj, "function") {
-      None => acc,
+      None => (idx + 1, deltas),
       Some(fj) => {
-        let id := str_field(cj, "id")
         let name := str_field(fj, "name")
+        let id := tool_call_id(cj, name, idx)
         let args := match jv.get_field(fj, "arguments") {
           Some(JStr(s)) => s,
           _ => "{}",
         }
         if str.is_empty(name) {
-          acc
+          (idx + 1, deltas)
         } else {
-          list.concat(acc, [ToolCallBegin(id, name), ToolArgChunk(id, args)])
+          (idx + 1, list.concat(deltas, [ToolCallBegin(id, name), ToolArgChunk(id, args)]))
         }
       },
     }
   })
+  match folded {
+    (_, ds) => ds,
+  }
 }
 
 # ---- Helpers -----------------------------------------------------
+fn tool_call_id(cj :: jv.Json, name :: Str, idx :: Int) -> Str {
+  let id := str_field(cj, "id")
+  if str.is_empty(id) {
+    str.concat(str.concat("call_", name), str.concat("_", int.to_str(idx)))
+  } else {
+    id
+  }
+}
+
 fn first[T](xs :: List[T]) -> Option[T] {
   list.fold(xs, None, fn (acc :: Option[T], x :: T) -> Option[T] {
     match acc {
