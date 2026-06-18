@@ -120,7 +120,7 @@ fn build_request(messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
   } else {
     list.concat(with_sys, [("tools", JList([JObj([("functionDeclarations", JList(list.map(tools, t.to_google_json)))])]))])
   }
-  let with_config := list.concat(with_tools, [("generationConfig", JObj([("thinkingConfig", JObj([("thinkingBudget", JInt(0))]))]))])
+  let with_config := list.concat(with_tools, [("generationConfig", JObj([("thinkingConfig", JObj([("thinkingBudget", JInt(1024))]))]))])
   jv.stringify(JObj(with_config))
 }
 
