@@ -214,8 +214,26 @@ fn last_user_content(conv :: List[msg.Message]) -> Str {
   })
 }
 
+# Dynamic toolset loading: a tool can emit a "LOADED_TOOLSET:<group>" marker in
+# its result (see lex-code's load_toolset tool). We scan the conversation for
+# that marker and expose a `loaded_<group>` boolean binding, which gated tools
+# reference in their precondition spec to become available once loaded.
+fn toolset_loaded(conv :: List[msg.Message], group :: Str) -> Bool {
+  let needle := str.concat("LOADED_TOOLSET:", group)
+  list.fold(conv, false, fn (acc :: Bool, m :: msg.Message) -> Bool {
+    match m {
+      ToolMsg(_, content) => if str.contains(content, needle) {
+        true
+      } else {
+        acc
+      },
+      _ => acc,
+    }
+  })
+}
+
 fn bindings_from_conv(conv :: List[msg.Message]) -> List[(Str, sp.SpecValue)] {
-  [("user_input", VStr(last_user_content(conv)))]
+  [("user_input", VStr(last_user_content(conv))), ("loaded_vcs", VBool(toolset_loaded(conv, "vcs"))), ("loaded_spec", VBool(toolset_loaded(conv, "spec"))), ("loaded_store", VBool(toolset_loaded(conv, "store")))]
 }
 
 # ---- Delta → CollectedResponse -----------------------------------
