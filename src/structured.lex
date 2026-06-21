@@ -31,7 +31,7 @@ import "std.iter" as iter
 
 # Ask the model to respond with a JSON object conforming to schema.
 # One attempt + one retry on validation failure.
-fn structured(agent :: ag.AgentDef, prompt :: Str, schema :: s.ModelSchema) -> [net, llm] Result[jv.Json, e.Errors] {
+fn structured(agent :: ag.AgentLoop, prompt :: Str, schema :: s.ModelSchema) -> [net, llm] Result[jv.Json, e.Errors] {
   let json_prompt := build_json_prompt(prompt, schema)
   let first_reply := call_once(agent, json_prompt)
   match validate_reply(schema, first_reply) {
@@ -44,7 +44,7 @@ fn structured(agent :: ag.AgentDef, prompt :: Str, schema :: s.ModelSchema) -> [
   }
 }
 
-fn call_once(agent :: ag.AgentDef, prompt :: Str) -> [net, llm] Str {
+fn call_once(agent :: ag.AgentLoop, prompt :: Str) -> [net, llm] Str {
   let messages := [SystemMsg(agent.goal), UserMsg(prompt)]
   let deltas := iter.to_list(agent.provider.chat(agent.model, messages, []))
   collect_text(deltas)
