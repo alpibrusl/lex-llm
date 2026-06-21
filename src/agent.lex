@@ -1,4 +1,4 @@
-# lex-llm — AgentDef + run_loop
+# lex-llm — AgentLoop + run_loop
 #
 # run_loop drives the stream → collect → dispatch → continue cycle:
 #
@@ -50,10 +50,18 @@ import "std.int" as int
 
 type AgentOptions = { temperature :: Option[Float], top_p :: Option[Float], max_steps :: Option[Int], max_tokens :: Option[Int] }
 
-# An agent is a value — compose agents by building AgentDef records.
+# An agent is a value — compose agents by building AgentLoop records.
 # Use make_agent() as the canonical constructor; it sets permission_spec: None.
 # Use with_permission_gate() to attach a runtime permission spec.
-type AgentDef = { name :: Str, goal :: Str, model :: prov.ModelRef, provider :: prov.Provider, tools :: List[t.Tool], options :: AgentOptions, permission_spec :: Option[sp.Spec] }
+#
+# Named AgentLoop (was AgentDef) to disambiguate from lex-agent's AgentDef: this
+# is the *brain* (a model + tools + run_loop), not the A2A/MCP *skin*. The two
+# compose — a brain runs inside a lex-agent Skill's handle (see lex-agent-llm).
+type AgentLoop = { name :: Str, goal :: Str, model :: prov.ModelRef, provider :: prov.Provider, tools :: List[t.Tool], options :: AgentOptions, permission_spec :: Option[sp.Spec] }
+
+# DEPRECATED alias — kept one release so importers (`ag.AgentDef`) keep compiling
+# while they migrate to AgentLoop. Remove in the next minor.
+type AgentDef = AgentLoop
 
 fn default_options() -> AgentOptions
   examples {
@@ -63,19 +71,19 @@ fn default_options() -> AgentOptions
   { temperature: Some(0.7), top_p: None, max_steps: Some(20), max_tokens: Some(4096) }
 }
 
-fn make_agent(name :: Str, goal :: Str, model :: prov.ModelRef, provider :: prov.Provider, tools :: List[t.Tool], options :: AgentOptions) -> AgentDef {
+fn make_agent(name :: Str, goal :: Str, model :: prov.ModelRef, provider :: prov.Provider, tools :: List[t.Tool], options :: AgentOptions) -> AgentLoop {
   { name: name, goal: goal, model: model, provider: provider, tools: tools, options: options, permission_spec: None }
 }
 
 # ---- Permission gating -------------------------------------------
 #
 # Construction-time: filter the tool list the model sees in its prompt.
-# Runtime (Phase 3): store the spec on AgentDef so dispatch_one can
+# Runtime (Phase 3): store the spec on AgentLoop so dispatch_one can
 # re-evaluate it for every tool call — even if the model somehow tries
 # to invoke a tool that was removed at construction time.
 #
 # Deny or Inconclusive both block dispatch and emit a spec.denied trail event.
-fn with_permission_gate(agent :: AgentDef, spec :: sp.Spec) -> AgentDef {
+fn with_permission_gate(agent :: AgentLoop, spec :: sp.Spec) -> AgentLoop {
   let allowed := list.filter(agent.tools, fn (tool :: t.Tool) -> Bool {
     let bindings := [("tool", VStr(tool.name))]
     sp.verdict_is_allow(ev.eval(spec, bindings))
@@ -95,18 +103,18 @@ type CollectedCall = { id :: Str, name :: Str, args_raw :: Str }
 type Dispatch = { call :: CollectedCall, success :: Bool, content :: Str }
 
 # ---- Public entry points -----------------------------------------
-fn run_loop(agent :: AgentDef, conversation :: List[msg.Message]) -> [net, llm, io, proc] Iter[d.Step] {
+fn run_loop(agent :: AgentLoop, conversation :: List[msg.Message]) -> [net, llm, io, proc] Iter[d.Step] {
   let budget := unwrap_int(agent.options.max_steps, 20)
   iter.from_list(run_steps(agent, conversation, budget))
 }
 
-fn run_loop_traced(agent :: AgentDef, conversation :: List[msg.Message], log :: trail.Log, parent :: Option[Str]) -> [net, llm, io, proc, sql, time] Iter[d.Step] {
+fn run_loop_traced(agent :: AgentLoop, conversation :: List[msg.Message], log :: trail.Log, parent :: Option[Str]) -> [net, llm, io, proc, sql, time] Iter[d.Step] {
   let budget := unwrap_int(agent.options.max_steps, 20)
   iter.from_list(run_steps_traced(agent, conversation, budget, log, parent))
 }
 
 # ---- Internal recursion ------------------------------------------
-fn run_steps(agent :: AgentDef, conv :: List[msg.Message], budget :: Int) -> [net, llm, io, proc] List[d.Step] {
+fn run_steps(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int) -> [net, llm, io, proc] List[d.Step] {
   if budget == 0 {
     [StepDone(AssistantMsg("[max_steps reached]", []))]
   } else {
@@ -153,7 +161,7 @@ fn any_dispatch_failed(dispatches :: List[Dispatch]) -> Bool {
   })
 }
 
-fn run_steps_traced(agent :: AgentDef, conv :: List[msg.Message], budget :: Int, log :: trail.Log, parent :: Option[Str]) -> [net, llm, io, proc, sql, time] List[d.Step] {
+fn run_steps_traced(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int, log :: trail.Log, parent :: Option[Str]) -> [net, llm, io, proc, sql, time] List[d.Step] {
   if budget == 0 {
     [StepDone(AssistantMsg("[max_steps reached]", []))]
   } else {
