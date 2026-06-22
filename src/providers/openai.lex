@@ -70,11 +70,11 @@ fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Mes
 
 # ---- Request building --------------------------------------------
 fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
-  let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(false)), ("max_tokens", JInt(2048))]
+  let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(false)), ("max_tokens", JInt(8192))]
   let with_tools := if list.is_empty(tools) {
     base
   } else {
-    list.concat(base, [("tools", JList(list.map(tools, t.to_openai_json)))])
+    list.concat(base, [("tools", JList(list.map(tools, t.to_openai_json))), ("tool_choice", JStr("required"))])
   }
   jv.stringify(JObj(with_tools))
 }
