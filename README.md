@@ -223,4 +223,4 @@ lex test   # runs tests/test_sse.lex and tests/test_structured.lex
 
 ---
 
-Built under the principles of [Trust Without Comprehension](https://alpibru.com/manifesto).
+Built under the principles of [Trust Without Comprehension](https://lexlang.org/manifesto).
