@@ -38,8 +38,18 @@ jobs:
           JWT=$(curl -sf -X POST https://vcs.lexlang.org/v1/admin/mint \
             -H "Authorization: Bearer $LEXHUB_ADMIN_SECRET" \
             -H "Content-Type: application/json" \
-            -d '{"tenant_id":"alpibrusl","ttl_secs":300}' | jq -r .token)
+            -d '{"tenant_id":"alpibrusl","ttl_secs":3600}' | jq -r .token)
           lex pkg publish --registry https://vcs.lexlang.org --token "$JWT"
+
+      - name: Set visibility public
+        if: steps.ver.outputs.changed == 'true'
+        env:
+          LEXHUB_ADMIN_SECRET: ${{ secrets.LEXHUB_ADMIN_SECRET }}
+        run: |
+          JWT=$(curl -sf -X POST https://vcs.lexlang.org/v1/admin/mint \
+            -H "Authorization: Bearer $LEXHUB_ADMIN_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{"tenant_id":"alpibrusl","ttl_secs":300}' | jq -r .token)
           PKG=$(grep -m1 '^name' lex.toml | sed 's/.*= *"\(.*\)"/\1/')
           curl -sf -X PUT "https://vcs.lexlang.org/v1/pkg/${PKG}/visibility" \
             -H "Authorization: Bearer $JWT" \
