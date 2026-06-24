@@ -1,8 +1,8 @@
 name: Publish to lex-hub
-
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   publish:
@@ -15,10 +15,14 @@ jobs:
       - name: Check if version changed
         id: ver
         run: |
-          OLD=$(git show HEAD~1:lex.toml 2>/dev/null | grep '^version' | head -1 || echo "")
-          NEW=$(grep '^version' lex.toml | head -1)
-          [ "$OLD" != "$NEW" ] && echo "changed=true" >> $GITHUB_OUTPUT \
-                                || echo "changed=false" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            OLD=$(git show HEAD~1:lex.toml 2>/dev/null | grep '^version' | head -1 || echo "")
+            NEW=$(grep '^version' lex.toml | head -1)
+            [ "$OLD" != "$NEW" ] && echo "changed=true" >> $GITHUB_OUTPUT \
+                                  || echo "changed=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Install lex
         if: steps.ver.outputs.changed == 'true'
