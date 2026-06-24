@@ -1,0 +1,43 @@
+name: Publish to lex-hub
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Check if version changed
+        id: ver
+        run: |
+          OLD=$(git show HEAD~1:lex.toml 2>/dev/null | grep '^version' | head -1 || echo "")
+          NEW=$(grep '^version' lex.toml | head -1)
+          [ "$OLD" != "$NEW" ] && echo "changed=true" >> $GITHUB_OUTPUT \
+                                || echo "changed=false" >> $GITHUB_OUTPUT
+
+      - name: Install lex
+        if: steps.ver.outputs.changed == 'true'
+        run: |
+          curl -fsSL "https://github.com/alpibrusl/lex-lang/releases/download/v0.9.14/lex-v0.9.14-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz --strip-components=1 -C /usr/local/bin
+
+      - name: Mint JWT + publish
+        if: steps.ver.outputs.changed == 'true'
+        env:
+          LEXHUB_ADMIN_SECRET: ${{ secrets.LEXHUB_ADMIN_SECRET }}
+        run: |
+          JWT=$(curl -sf -X POST https://vcs.lexlang.org/v1/admin/mint \
+            -H "X-Admin-Secret: $LEXHUB_ADMIN_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{"sub":"alpibrusl","exp":300}' | jq -r .token)
+          lex pkg publish --registry https://vcs.lexlang.org --token "$JWT"
+          PKG=$(grep -m1 '^name' lex.toml | sed 's/.*= *"\(.*\)"/\1/')
+          curl -sf -X PUT "https://vcs.lexlang.org/v1/pkg/${PKG}/visibility" \
+            -H "Authorization: Bearer $JWT" \
+            -H "Content-Type: application/json" \
+            -d '{"visibility":"public"}' || true
