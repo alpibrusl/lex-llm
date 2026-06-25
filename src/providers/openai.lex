@@ -144,9 +144,19 @@ fn content_or_reasoning(mj :: jv.Json) -> Str {
     _ => "",
   }
   if str.is_empty(str.trim(c)) {
-    match jv.get_field(mj, "reasoning") {
+    # "reasoning" — o1/o3 style
+    # "reasoning_content" — DeepSeek thinking mode (opencode-go)
+    let r1 := match jv.get_field(mj, "reasoning") {
       Some(JStr(r)) => r,
-      _ => c,
+      _ => "",
+    }
+    if str.is_empty(str.trim(r1)) {
+      match jv.get_field(mj, "reasoning_content") {
+        Some(JStr(r)) => r,
+        _ => c,
+      }
+    } else {
+      r1
     }
   } else {
     c
