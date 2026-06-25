@@ -43,6 +43,12 @@ fn openai() -> [env] prov.Provider {
   oai.make_provider(oai.default_config(get_key("OPENAI_API_KEY")))
 }
 
+# OpenCode Go plan — https://opencode.ai/docs/zen
+# Set OPENCODE_API_KEY to the key in ~/.credentials/opencode/key
+fn opencode_go() -> [env] prov.Provider {
+  oai.make_provider({ api_key: get_key("OPENCODE_API_KEY"), base_url: "https://opencode.ai/zen/go/v1/chat/completions" })
+}
+
 fn google() -> [env] prov.Provider {
   goog.make_provider(goog.default_config(get_key("GOOGLE_API_KEY")))
 }
