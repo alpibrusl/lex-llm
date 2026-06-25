@@ -27,7 +27,7 @@ jobs:
       - name: Install lex
         if: steps.ver.outputs.changed == 'true'
         run: |
-          curl -fsSL "https://github.com/alpibrusl/lex-lang/releases/download/v0.9.14/lex-v0.9.14-x86_64-unknown-linux-gnu.tar.gz" \
+          curl -fsSL "https://github.com/alpibrusl/lex-lang/releases/download/v0.10.0/lex-v0.10.0-x86_64-unknown-linux-gnu.tar.gz" \
             | tar -xz --strip-components=1 -C /usr/local/bin
 
       - name: Mint JWT + publish
