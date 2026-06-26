@@ -74,7 +74,10 @@ fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools ::
   let with_tools := if list.is_empty(tools) {
     base
   } else {
-    list.concat(base, [("tools", JList(list.map(tools, t.to_openai_json))), ("tool_choice", JStr("required"))])
+    # "required" breaks thinking-mode models (DeepSeek, Qwen3, Kimi via opencode-go).
+    # "auto" is safe: the system prompt always instructs the agent to call a tool,
+    # so the model calls it without needing to be forced.
+    list.concat(base, [("tools", JList(list.map(tools, t.to_openai_json))), ("tool_choice", JStr("auto"))])
   }
   jv.stringify(JObj(with_tools))
 }
