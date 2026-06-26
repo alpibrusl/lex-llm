@@ -46,7 +46,19 @@ fn openai() -> [env] prov.Provider {
 # OpenCode Go plan — https://opencode.ai/docs/zen
 # Set OPENCODE_API_KEY to the key in ~/.credentials/opencode/key
 fn opencode_go() -> [env] prov.Provider {
-  oai.make_provider({ api_key: get_key("OPENCODE_API_KEY"), base_url: "https://opencode.ai/zen/go/v1/chat/completions" })
+  opencode_go_at("", get_key("OPENCODE_API_KEY"))
+}
+
+# OpenCode Go plan with an explicit key and optional base-url override.
+# Used by select_provider so the key can arrive via the agent request JSON
+# (provider_key) instead of the environment. Empty url → the Go endpoint.
+fn opencode_go_at(url :: Str, key :: Str) -> prov.Provider {
+  let base := if str.is_empty(url) {
+    "https://opencode.ai/zen/go/v1/chat/completions"
+  } else {
+    url
+  }
+  oai.make_provider({ api_key: key, base_url: base })
 }
 
 fn google() -> [env] prov.Provider {
@@ -190,49 +202,55 @@ fn vertex_with_config(access_token :: Str, project_id :: Str, location :: Str) -
 # provider_name/provider_url/provider_key (e.g. lex-soft AgentConfig) pass them
 # straight through.
 #
-#   name  : "mlx" | "ollama" | "vllm" | "openai" | "anthropic" | "google" |
-#           "mistral" | "vertex" (any other value → vertex).
+#   name  : "opencode-go" | "mlx" | "ollama" | "vllm" | "openai" | "anthropic" |
+#           "google" | "mistral" | "vertex" (any other value → vertex).
 #   url   : base URL/host for local & OpenAI-compatible servers (mlx/ollama/vllm);
+#           the OpenCode Go endpoint override for "opencode-go" (empty → default);
 #           the Vertex location for "vertex"; ignored by cloud-key providers.
-#   key   : API key for cloud providers; for "vertex" it is the packed
-#           "<access_token>|||<project_id>"; ignored for local providers.
+#   key   : API key for cloud providers; the OpenCode key for "opencode-go"; for
+#           "vertex" it is the packed "<access_token>|||<project_id>"; ignored for
+#           local providers.
 fn select_provider(name :: Str, url :: Str, key :: Str) -> prov.Provider {
-  if name == "mlx" {
-    mlx_at(url)
+  if name == "opencode-go" {
+    opencode_go_at(url, key)
   } else {
-    if name == "ollama" {
-      ollama_at(url)
+    if name == "mlx" {
+      mlx_at(url)
     } else {
-      if name == "vllm" {
-        vllm_at(url)
+      if name == "ollama" {
+        ollama_at(url)
       } else {
-        if name == "openai" {
-          openai_with_key(key)
+        if name == "vllm" {
+          vllm_at(url)
         } else {
-          if name == "anthropic" {
-            anthropic_with_key(key)
+          if name == "openai" {
+            openai_with_key(key)
           } else {
-            if name == "google" {
-              google_with_key(key)
+            if name == "anthropic" {
+              anthropic_with_key(key)
             } else {
-              if name == "mistral" {
-                mistral_with_key(key)
+              if name == "google" {
+                google_with_key(key)
               } else {
-                let parts := str.split(key, "|||")
-                let token := match list.head(parts) {
-                  Some(s) => s,
-                  None => "",
-                }
-                let project := match str.strip_prefix(key, str.concat(token, "|||")) {
-                  Some(s) => s,
-                  None => "",
-                }
-                let location := if str.is_empty(url) {
-                  "eu"
+                if name == "mistral" {
+                  mistral_with_key(key)
                 } else {
-                  url
+                  let parts := str.split(key, "|||")
+                  let token := match list.head(parts) {
+                    Some(s) => s,
+                    None => "",
+                  }
+                  let project := match str.strip_prefix(key, str.concat(token, "|||")) {
+                    Some(s) => s,
+                    None => "",
+                  }
+                  let location := if str.is_empty(url) {
+                    "eu"
+                  } else {
+                    url
+                  }
+                  vertex_with_config(token, project, location)
                 }
-                vertex_with_config(token, project, location)
               }
             }
           }
