@@ -45,8 +45,17 @@ fn openai() -> [env] prov.Provider {
 
 # OpenCode Go plan — https://opencode.ai/docs/zen
 # Set OPENCODE_API_KEY to the key in ~/.credentials/opencode/key
+# Set OPENCODE_BASE_URL to route through a local proxy (e.g. bench/reasoning-proxy.py)
 fn opencode_go() -> [env] prov.Provider {
-  opencode_go_at("", get_key("OPENCODE_API_KEY"))
+  let url := match env.get("OPENCODE_BASE_URL") {
+    None => "",
+    Some(u) => if str.is_empty(u) {
+      ""
+    } else {
+      str.concat(u, "/chat/completions")
+    },
+  }
+  opencode_go_at(url, get_key("OPENCODE_API_KEY"))
 }
 
 # OpenCode Go plan with an explicit key and optional base-url override.
