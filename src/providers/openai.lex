@@ -74,9 +74,6 @@ fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools ::
   let with_tools := if list.is_empty(tools) {
     base
   } else {
-    # "required" breaks thinking-mode models (DeepSeek, Qwen3, Kimi via opencode-go).
-    # "auto" is safe: the system prompt always instructs the agent to call a tool,
-    # so the model calls it without needing to be forced.
     list.concat(base, [("tools", JList(list.map(tools, t.to_openai_json))), ("tool_choice", JStr("auto"))])
   }
   jv.stringify(JObj(with_tools))
@@ -147,8 +144,6 @@ fn content_or_reasoning(mj :: jv.Json) -> Str {
     _ => "",
   }
   if str.is_empty(str.trim(c)) {
-    # "reasoning" — o1/o3 style
-    # "reasoning_content" — DeepSeek thinking mode (opencode-go)
     let r1 := match jv.get_field(mj, "reasoning") {
       Some(JStr(r)) => r,
       _ => "",
