@@ -20,6 +20,7 @@ fn delta_id_sig(dl :: d.Delta) -> Str {
     ToolCallBegin(id, name) => str.concat("Begin:", str.concat(id, str.concat(":", name))),
     ToolArgChunk(id, _) => str.concat("Args:", id),
     FinishDelta(r) => str.concat("Finish:", r),
+    UsageDelta(p, c, t) => str.join(["Usage:", int.to_str(p), ",", int.to_str(c), ",", int.to_str(t)], ""),
   }
 }
 
@@ -60,8 +61,26 @@ fn test_openai_synthesizes_unique_missing_tool_call_ids() -> Result[Unit, Str] {
   assert_eq("openai fallback ids", got, "Begin:call_write_0:write|Args:call_write_0|Begin:call_write_1:write|Args:call_write_1|Finish:tool_calls")
 }
 
+# Real per-call token cost (#94, loom) reads this UsageDelta -- confirm the
+# top-level OpenAI-compatible "usage" object survives parse_completion intact
+# and lands ahead of the message/finish deltas.
+fn test_openai_usage_field_becomes_usage_delta() -> Result[Unit, Str] {
+  let body := "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":30,\"total_tokens\":150}}"
+  let got := id_signature(parse_openai_completion(body))
+  assert_eq("openai usage delta", got, "Usage:120,30,150|Text|Finish:stop")
+}
+
+# Absent "usage" (a provider/proxy that doesn't report it) must emit NO
+# UsageDelta at all -- callers need to distinguish "not reported" from a real
+# zero-token response, and a phantom Usage:0,0,0 would erase that distinction.
+fn test_openai_missing_usage_emits_no_usage_delta() -> Result[Unit, Str] {
+  let body := "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}"
+  let got := id_signature(parse_openai_completion(body))
+  assert_eq("openai no usage field", got, "Text|Finish:stop")
+}
+
 fn run_all() -> Unit {
-  let results := [test_ollama_preserves_native_tool_call_ids(), test_ollama_xml_synthesizes_unique_tool_call_ids(), test_openai_synthesizes_unique_missing_tool_call_ids()]
+  let results := [test_ollama_preserves_native_tool_call_ids(), test_ollama_xml_synthesizes_unique_tool_call_ids(), test_openai_synthesizes_unique_missing_tool_call_ids(), test_openai_usage_field_becomes_usage_delta(), test_openai_missing_usage_emits_no_usage_delta()]
   let failures := list.fold(results, 0, fn (n :: Int, r :: Result[Unit, Str]) -> Int {
     match r {
       Ok(_) => n,

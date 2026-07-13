@@ -104,10 +104,11 @@ fn encode_tool_call(call :: msg.ToolCall) -> jv.Json {
 #                  "tool_calls": [{"id":"...","type":"function","function":{"name":"...","arguments":"{}"}}] },
 #               "finish_reason":"tool_calls" }] }
 fn parse_completion(j :: jv.Json) -> List[d.Delta] {
+  let usage_deltas := parse_usage(j)
   match jv.get_field(j, "choices") {
-    None => [],
+    None => usage_deltas,
     Some(JList(xs)) => match first(xs) {
-      None => [],
+      None => usage_deltas,
       Some(choice) => {
         let finish := match jv.get_field(choice, "finish_reason") {
           Some(JStr(r)) => r,
@@ -117,10 +118,46 @@ fn parse_completion(j :: jv.Json) -> List[d.Delta] {
           None => [],
           Some(mj) => parse_message_obj(mj),
         }
-        list.concat(msg_deltas, [FinishDelta(finish)])
+        list.concat(usage_deltas, list.concat(msg_deltas, [FinishDelta(finish)]))
       },
     },
-    _ => [],
+    _ => usage_deltas,
+  }
+}
+
+# Top-level "usage": {"prompt_tokens":N,"completion_tokens":N,"total_tokens":N}
+# -- present on OpenAI Chat Completions and every OpenAI-compatible proxy this
+# codebase talks to (opencode-go, DeepSeek). Absent entirely => no UsageDelta,
+# not a zero -- callers must not conflate "not reported" with "free".
+fn parse_usage(j :: jv.Json) -> List[d.Delta] {
+  match jv.get_field(j, "usage") {
+    None => [],
+    Some(uj) => {
+      let p := int_field(uj, "prompt_tokens")
+      let c := int_field(uj, "completion_tokens")
+      let t := int_field(uj, "total_tokens")
+      let all_zero := if p == 0 {
+        if c == 0 {
+          t == 0
+        } else {
+          false
+        }
+      } else {
+        false
+      }
+      if all_zero {
+        []
+      } else {
+        [UsageDelta(p, c, t)]
+      }
+    },
+  }
+}
+
+fn int_field(j :: jv.Json, key :: Str) -> Int {
+  match jv.get_field(j, key) {
+    Some(JInt(v)) => v,
+    _ => 0,
   }
 }
 

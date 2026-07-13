@@ -8,7 +8,12 @@
 import "./message" as msg
 
 # Provider-level streaming chunk.
-type Delta = TextChunk(Str) | ToolCallBegin((Str, Str)) | ToolArgChunk((Str, Str)) | FinishDelta(Str)
+# UsageDelta carries (prompt_tokens, completion_tokens, total_tokens) from the
+# provider's own response when it reports them (e.g. OpenAI-compatible chat
+# completions' top-level "usage" object) -- providers that don't report usage
+# simply never emit this variant, so callers should treat its absence as
+# "unknown", not "zero cost".
+type Delta = TextChunk(Str) | ToolCallBegin((Str, Str)) | ToolArgChunk((Str, Str)) | FinishDelta(Str) | UsageDelta((Int, Int, Int))
 
 type Step = StepDelta(Delta) | StepToolExec((Str, Str)) | StepToolResult((Str, Bool)) | StepDone(msg.Message)
 
