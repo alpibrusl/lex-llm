@@ -93,7 +93,11 @@ fn with_permission_gate(agent :: AgentLoop, spec :: sp.Spec) -> AgentLoop {
 
 # ---- Internal collected-response type ----------------------------
 # Complete response assembled from one turn's Delta stream.
-type CollectedResponse = { content :: Str, tool_calls :: List[CollectedCall], finish_reason :: Str }
+# prompt_tokens/completion_tokens/total_tokens are 0 iff the provider never
+# emitted a UsageDelta this turn (either it doesn't report usage, or genuinely
+# used 0) -- callers wanting to distinguish "not reported" from "free" should
+# check total_tokens == 0 at the Step level via StepDelta(UsageDelta(...)).
+type CollectedResponse = { content :: Str, tool_calls :: List[CollectedCall], finish_reason :: Str, prompt_tokens :: Int, completion_tokens :: Int, total_tokens :: Int }
 
 # Tool call with args fully assembled from streaming ToolArgChunk events.
 type CollectedCall = { id :: Str, name :: Str, args_raw :: Str }
@@ -240,9 +244,10 @@ fn bindings_from_conv(conv :: List[msg.Message]) -> List[(Str, sp.SpecValue)] {
 fn collect_response(deltas :: List[d.Delta]) -> CollectedResponse {
   list.fold(deltas, empty_response(), fn (acc :: CollectedResponse, dl :: d.Delta) -> CollectedResponse {
     match dl {
-      TextChunk(s) => { content: str.concat(acc.content, s), tool_calls: acc.tool_calls, finish_reason: acc.finish_reason },
-      ToolCallBegin(id, name) => { content: acc.content, tool_calls: list.cons({ id: id, name: name, args_raw: "" }, acc.tool_calls), finish_reason: acc.finish_reason },
-      ToolArgChunk(id, chunk) => { content: acc.content, tool_calls: append_arg_chunk(acc.tool_calls, id, chunk), finish_reason: acc.finish_reason },
+      TextChunk(s) => { content: str.concat(acc.content, s), tool_calls: acc.tool_calls, finish_reason: acc.finish_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens },
+      ToolCallBegin(id, name) => { content: acc.content, tool_calls: list.cons({ id: id, name: name, args_raw: "" }, acc.tool_calls), finish_reason: acc.finish_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens },
+      ToolArgChunk(id, chunk) => { content: acc.content, tool_calls: append_arg_chunk(acc.tool_calls, id, chunk), finish_reason: acc.finish_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens },
+      UsageDelta(p, c, t) => { content: acc.content, tool_calls: acc.tool_calls, finish_reason: acc.finish_reason, prompt_tokens: p, completion_tokens: c, total_tokens: t },
       FinishDelta(reason) => {
         let calls := list.reverse(acc.tool_calls)
         let actual_reason := if reason == "stop" {
@@ -254,7 +259,7 @@ fn collect_response(deltas :: List[d.Delta]) -> CollectedResponse {
         } else {
           reason
         }
-        { content: acc.content, tool_calls: calls, finish_reason: actual_reason }
+        { content: acc.content, tool_calls: calls, finish_reason: actual_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens }
       },
     }
   })
@@ -262,10 +267,10 @@ fn collect_response(deltas :: List[d.Delta]) -> CollectedResponse {
 
 fn empty_response() -> CollectedResponse
   examples {
-    empty_response() => { content: "", tool_calls: [], finish_reason: "stop" }
+    empty_response() => { content: "", tool_calls: [], finish_reason: "stop", prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   }
 {
-  { content: "", tool_calls: [], finish_reason: "stop" }
+  { content: "", tool_calls: [], finish_reason: "stop", prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
 }
 
 fn append_arg_chunk(calls :: List[CollectedCall], id :: Str, chunk :: Str) -> List[CollectedCall] {
