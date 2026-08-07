@@ -82,7 +82,7 @@ lex run --allow-effects net,llm main.lex main '"sk-ant-..."'
 | Module | Constructor | Models |
 |---|---|---|
 | `lex-llm/providers/openai` | `make_provider(default_config(api_key))` | GPT-4o, GPT-4o-mini, o1, o3-mini, … |
-| `lex-llm/providers/anthropic` | `make_provider(default_config(api_key))` | claude-opus-4-7, claude-sonnet-4-6, … |
+| `lex-llm/providers/anthropic` | `make_provider(default_config(api_key))` | claude-opus-5, claude-sonnet-5, claude-haiku-4-5, … |
 | `lex-llm/providers/google` | `make_provider({ api_key: key })` | gemini-2.0-flash, gemini-2.5-pro, … |
 | `lex-llm/providers/ollama` | `make_provider(default_config())` | llama3, mistral, qwen2, … (local) |
 | `lex-llm/providers/vertex` | `make_provider(config_at(token, project, location))` | gemini-3.5-flash, … (Vertex AI, EU) |

@@ -4,7 +4,7 @@
 # Anthropic's SSE format uses typed event: fields; we track block state
 # in a fold to route input_json_delta chunks to the right call_id.
 #
-# Supported: claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-*
+# Supported: claude-opus-5, claude-sonnet-5, claude-haiku-4-5-*
 
 import "../message" as msg
 

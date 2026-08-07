@@ -29,11 +29,11 @@ fn gpt4o_mini() -> ModelRef {
 
 # Anthropic
 fn claude_opus() -> ModelRef {
-  { provider: "anthropic", model: "claude-opus-4-7" }
+  { provider: "anthropic", model: "claude-opus-5" }
 }
 
 fn claude_sonnet() -> ModelRef {
-  { provider: "anthropic", model: "claude-sonnet-4-6" }
+  { provider: "anthropic", model: "claude-sonnet-5" }
 }
 
 fn claude_haiku() -> ModelRef {
