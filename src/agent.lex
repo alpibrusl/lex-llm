@@ -391,7 +391,7 @@ fn dispatches_to_messages(dispatches :: List[Dispatch]) -> List[msg.Message] {
 # ---- Trail JSON helpers ------------------------------------------
 fn llm_step_json(model :: prov.ModelRef, tool_call_count :: Int) -> Str
   examples {
-    llm_step_json(prov.claude_sonnet(), 2) => "{\"model\":\"claude-sonnet-4-6\",\"tokens_in\":0,\"tokens_out\":0,\"tool_calls\":2}"
+    llm_step_json(prov.claude_sonnet(), 2) => "{\"model\":\"claude-sonnet-5\",\"tokens_in\":0,\"tokens_out\":0,\"tool_calls\":2}"
   }
 {
   str.join(["{\"model\":\"", model.model, "\",\"tokens_in\":0,\"tokens_out\":0,\"tool_calls\":", int.to_str(tool_call_count), "}"], "")
