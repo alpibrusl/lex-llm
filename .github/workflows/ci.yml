@@ -31,6 +31,10 @@ jobs:
       - name: Install Lex toolchain
         run: |
           set -euxo pipefail
+          # NOTE (#41): src/tool.lex imports std.approval, which lands in
+          # the first lex-lang release after v0.10.9 (lex-lang#737). Bump
+          # this pin to that release when it ships; until then the
+          # type-check step fails under this version.
           LEX_VERSION="0.10.7"
           curl -fsSL -o /tmp/lex.tgz \
             "https://github.com/alpibrusl/lex-lang/releases/download/v${LEX_VERSION}/lex-v${LEX_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
@@ -61,5 +65,5 @@ jobs:
         working-directory: lex-llm
 
       - name: Test
-        run: lex test --allow-effects io,time,crypto,random,sql,fs_read,fs_write,net,concurrent,llm,proc tests/
+        run: lex test --allow-effects io,time,crypto,random,sql,fs_read,fs_write,net,concurrent,llm,proc,approval tests/
         working-directory: lex-llm

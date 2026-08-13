@@ -13,7 +13,10 @@
 #        b. Check each tool call against agent.permission_spec (Phase 3):
 #           denied calls return spec-denied error and emit spec.denied trail
 #           event without executing; the model is expected to self-correct.
-#        c. Execute allowed tools; append AssistantMsg + ToolMsg; recurse.
+#        c. Tools carrying an approval_scope block on a human decision
+#           (std.approval.request, #41) before executing; denials return an
+#           approval_denied error the model can react to.
+#        d. Execute allowed tools; append AssistantMsg + ToolMsg; recurse.
 #   7. Otherwise emit StepDone.
 #
 # run_loop_traced: same loop with lex-trail events at each step.
@@ -107,18 +110,18 @@ type CollectedCall = { id :: Str, name :: Str, args_raw :: Str }
 type Dispatch = { call :: CollectedCall, success :: Bool, content :: Str }
 
 # ---- Public entry points -----------------------------------------
-fn run_loop(agent :: AgentLoop, conversation :: List[msg.Message]) -> [net, llm, io, proc] Iter[d.Step] {
+fn run_loop(agent :: AgentLoop, conversation :: List[msg.Message]) -> [net, llm, io, proc, approval] Iter[d.Step] {
   let budget := unwrap_int(agent.options.max_steps, 20)
   iter.from_list(run_steps(agent, conversation, budget))
 }
 
-fn run_loop_traced(agent :: AgentLoop, conversation :: List[msg.Message], log :: trail.Log, parent :: Option[Str]) -> [net, llm, io, proc, sql, time] Iter[d.Step] {
+fn run_loop_traced(agent :: AgentLoop, conversation :: List[msg.Message], log :: trail.Log, parent :: Option[Str]) -> [net, llm, io, proc, sql, time, approval] Iter[d.Step] {
   let budget := unwrap_int(agent.options.max_steps, 20)
   iter.from_list(run_steps_traced(agent, conversation, budget, log, parent))
 }
 
 # ---- Internal recursion ------------------------------------------
-fn run_steps(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int) -> [net, llm, io, proc] List[d.Step] {
+fn run_steps(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int) -> [net, llm, io, proc, approval] List[d.Step] {
   if budget == 0 {
     [StepDone(AssistantMsg("[max_steps reached]", []))]
   } else {
@@ -165,7 +168,7 @@ fn any_dispatch_failed(dispatches :: List[Dispatch]) -> Bool {
   })
 }
 
-fn run_steps_traced(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int, log :: trail.Log, parent :: Option[Str]) -> [net, llm, io, proc, sql, time] List[d.Step] {
+fn run_steps_traced(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int, log :: trail.Log, parent :: Option[Str]) -> [net, llm, io, proc, sql, time, approval] List[d.Step] {
   if budget == 0 {
     [StepDone(AssistantMsg("[max_steps reached]", []))]
   } else {
@@ -299,19 +302,19 @@ fn append_arg_chunk(calls :: List[CollectedCall], id :: Str, chunk :: Str) -> Li
 #
 # spec_opt: when Some, each call is checked against the spec before
 # execution. Denied calls return a spec-denied error to the model.
-fn dispatch_calls(tools :: List[t.Tool], calls :: List[CollectedCall], spec_opt :: Option[sp.Spec]) -> [net, io, proc] List[Dispatch] {
-  list.map(calls, fn (call :: CollectedCall) -> [net, io, proc] Dispatch {
+fn dispatch_calls(tools :: List[t.Tool], calls :: List[CollectedCall], spec_opt :: Option[sp.Spec]) -> [net, io, proc, approval] List[Dispatch] {
+  list.map(calls, fn (call :: CollectedCall) -> [net, io, proc, approval] Dispatch {
     dispatch_one(tools, call, spec_opt)
   })
 }
 
-fn dispatch_calls_traced(tools :: List[t.Tool], calls :: List[CollectedCall], log :: trail.Log, parent :: Option[Str], spec_opt :: Option[sp.Spec]) -> [net, io, proc, sql, time] List[Dispatch] {
-  list.map(calls, fn (call :: CollectedCall) -> [net, io, proc, sql, time] Dispatch {
+fn dispatch_calls_traced(tools :: List[t.Tool], calls :: List[CollectedCall], log :: trail.Log, parent :: Option[Str], spec_opt :: Option[sp.Spec]) -> [net, io, proc, sql, time, approval] List[Dispatch] {
+  list.map(calls, fn (call :: CollectedCall) -> [net, io, proc, sql, time, approval] Dispatch {
     dispatch_one_traced(tools, call, log, parent, spec_opt)
   })
 }
 
-fn dispatch_one(tools :: List[t.Tool], call :: CollectedCall, spec_opt :: Option[sp.Spec]) -> [net, io, proc] Dispatch {
+fn dispatch_one(tools :: List[t.Tool], call :: CollectedCall, spec_opt :: Option[sp.Spec]) -> [net, io, proc, approval] Dispatch {
   let is_allowed := match spec_opt {
     None => true,
     Some(spec) => {
@@ -323,7 +326,7 @@ fn dispatch_one(tools :: List[t.Tool], call :: CollectedCall, spec_opt :: Option
     let args := parse_args_or_empty(call.args_raw)
     match t.find_by_name(tools, call.name) {
       None => { call: call, success: false, content: str.concat("{\"error\":\"unknown tool: ", str.concat(call.name, "}")) },
-      Some(tool) => match t.validate_and_exec(tool, args) {
+      Some(tool) => match t.exec_with_approval(tool, args) {
         Ok(out) => { call: call, success: true, content: jv.stringify(out) },
         Err(errs) => { call: call, success: false, content: str.concat("{\"error\":\"", str.concat(t.format_validation_error(errs), "}")) },
       },
@@ -333,7 +336,7 @@ fn dispatch_one(tools :: List[t.Tool], call :: CollectedCall, spec_opt :: Option
   }
 }
 
-fn dispatch_one_traced(tools :: List[t.Tool], call :: CollectedCall, log :: trail.Log, parent :: Option[Str], spec_opt :: Option[sp.Spec]) -> [net, io, proc, sql, time] Dispatch {
+fn dispatch_one_traced(tools :: List[t.Tool], call :: CollectedCall, log :: trail.Log, parent :: Option[Str], spec_opt :: Option[sp.Spec]) -> [net, io, proc, sql, time, approval] Dispatch {
   let is_allowed := match spec_opt {
     None => true,
     Some(spec) => {

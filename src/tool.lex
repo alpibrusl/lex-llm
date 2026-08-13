@@ -14,6 +14,21 @@
 # value. `filter_available(tools, bindings)` evaluates each tool's spec
 # and drops those that Deny or are Inconclusive, so only contextually
 # permitted tools are offered to the model on each turn.
+#
+# Approval gating (#41): the optional `approval_scope` field marks a tool
+# as requiring a human decision before each execution. It is enforced by
+# the dispatch layer (exec_with_approval), which calls
+# std.approval.request(scope, reason) — the [approval] host boundary from
+# lex-lang#737 — before invoking execute. The mechanism that actually
+# reaches a human (stdin prompt, dashboard long-poll, ...) is supplied by
+# the embedding host as an ApprovalSink; tools only declare *that* they
+# need approval, not *how* it is obtained. The operator's answer is
+# injected into the validated args as `_approval_answer`, so
+# answer-carrying tools (ask_human) can return it. The Tool.execute row
+# stays [net, io, proc] — approval is deliberately a harness effect, not
+# a tool-body effect, mirroring the precondition/permission_spec design.
+
+import "std.approval" as approval
 
 import "lex-schema/schema" as s
 
@@ -29,21 +44,28 @@ import "std.list" as list
 
 import "std.str" as str
 
-type Tool = { name :: Str, description :: Str, params :: s.ModelSchema, execute :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors], precondition :: Option[sp.Spec] }
+type Tool = { name :: Str, description :: Str, params :: s.ModelSchema, execute :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors], precondition :: Option[sp.Spec], approval_scope :: Option[Str] }
 
-# Canonical constructor — no precondition (always available).
+# Canonical constructor — no precondition (always available), no approval.
 fn define(name :: Str, description :: Str, params :: s.ModelSchema, execute :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors]) -> Tool {
-  { name: name, description: description, params: params, execute: execute, precondition: None }
+  { name: name, description: description, params: params, execute: execute, precondition: None, approval_scope: None }
 }
 
 # Constructor with a spec precondition attached.
 fn define_gated(name :: Str, description :: Str, params :: s.ModelSchema, execute :: (jv.Json) -> [net, io, proc] Result[jv.Json, e.Errors], spec :: sp.Spec) -> Tool {
-  { name: name, description: description, params: params, execute: execute, precondition: Some(spec) }
+  { name: name, description: description, params: params, execute: execute, precondition: Some(spec), approval_scope: None }
 }
 
 # Attach or replace the precondition on an existing tool.
 fn with_precondition(tool :: Tool, spec :: sp.Spec) -> Tool {
-  { name: tool.name, description: tool.description, params: tool.params, execute: tool.execute, precondition: Some(spec) }
+  { name: tool.name, description: tool.description, params: tool.params, execute: tool.execute, precondition: Some(spec), approval_scope: tool.approval_scope }
+}
+
+# Mark a tool as requiring a human decision before each execution.
+# scope selects the approval channel and is checked at run time against
+# --allow-approval (mirrors how net("host") checks --allow-net-host).
+fn with_approval(tool :: Tool, scope :: Str) -> Tool {
+  { name: tool.name, description: tool.description, params: tool.params, execute: tool.execute, precondition: tool.precondition, approval_scope: Some(scope) }
 }
 
 # Validate args through the tool's param schema then dispatch.
@@ -52,6 +74,41 @@ fn validate_and_exec(tool :: Tool, args :: jv.Json) -> [net, io, proc] Result[jv
   match s.validate(tool.params, args) {
     Err(errs) => Err(errs),
     Ok(valid) => tool.execute(valid),
+  }
+}
+
+# Validate, then request human approval when the tool carries an
+# approval_scope, then dispatch. This is the dispatch-layer entry point
+# the agent loop uses (#41): tools never call std.approval themselves —
+# their execute row stays [net, io, proc] — the harness does, so the
+# [approval] effect surfaces on the loop's signature where the operator
+# grants it. On approval, the operator's answer is appended to the
+# validated args as `_approval_answer` (validation has already passed on
+# the clean args); on denial the model gets a recoverable
+# `approval_denied` error, same shape as spec-denied.
+fn exec_with_approval(tool :: Tool, args :: jv.Json) -> [net, io, proc, approval] Result[jv.Json, e.Errors] {
+  match tool.approval_scope {
+    None => validate_and_exec(tool, args),
+    Some(scope) => match s.validate(tool.params, args) {
+      Err(errs) => Err(errs),
+      Ok(valid) => {
+        let reason := str.join([tool.name, " ", jv.stringify(valid)], "")
+        match approval.request(scope, reason) {
+          Err(why) => Err([{ path: "", code: "approval_denied", message: why }]),
+          Ok(answer) => tool.execute(inject_approval_answer(valid, answer)),
+        }
+      },
+    },
+  }
+}
+
+# Append the operator's answer to an already-validated args object so
+# answer-carrying tools (ask_human) can read it. Non-object args pass
+# through untouched.
+fn inject_approval_answer(args :: jv.Json, answer :: Str) -> jv.Json {
+  match args {
+    JObj(fields) => JObj(list.concat(fields, [("_approval_answer", JStr(answer))])),
+    other => other,
   }
 }
 
