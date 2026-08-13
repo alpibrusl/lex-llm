@@ -88,30 +88,95 @@ fn split_system(messages :: List[msg.Message]) -> (Str, List[msg.Message]) {
 }
 
 fn build_request(model :: prov.ModelRef, sys :: Str, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
-  let base := [("model", JStr(model.model)), ("max_tokens", JInt(4096)), ("stream", JBool(true)), ("messages", JList(list.map(messages, encode_message)))]
+  let base := [("model", JStr(model.model)), ("max_tokens", JInt(4096)), ("stream", JBool(true)), ("messages", JList(encode_messages_cached(messages)))]
   let with_sys := if str.is_empty(sys) {
     base
   } else {
-    list.concat(base, [("system", JStr(sys))])
+    list.concat(base, [("system", JList([cache_marked(text_block(sys))]))])
   }
   let with_tools := if list.is_empty(tools) {
     with_sys
   } else {
-    list.concat(with_sys, [("tools", JList(list.map(tools, t.to_anthropic_json)))])
+    list.concat(with_sys, [("tools", JList(mark_last_cached(list.map(tools, t.to_anthropic_json))))])
   }
   jv.stringify(JObj(with_tools))
 }
 
-fn encode_message(m :: msg.Message) -> jv.Json {
+# ---- Prompt caching -------------------------------------------------
+#
+# Three static/growing-prefix breakpoints, well under Anthropic's 4-per-
+# request cap: tools (static per agent), system prompt (static per
+# agent), and the message history's last entry (grows by append only —
+# each `chat()` call resends the full history, so marking the current
+# last message caches everything up to it; the next call's longer
+# history shares that exact prefix and only pays for the new suffix).
+# Tool schemas + system prompts are typically hundreds to low thousands
+# of tokens and identical on every step of a `max_steps: 50` agent loop,
+# so this is a straight latency/cost win with no behavior change — below
+# the provider's minimum cacheable length, cache_control is silently a
+# no-op rather than an error.
+fn cache_control_ephemeral() -> jv.Json {
+  JObj([("type", JStr("ephemeral"))])
+}
+
+fn cache_marked(j :: jv.Json) -> jv.Json {
+  match j {
+    JObj(fields) => JObj(list.concat(fields, [("cache_control", cache_control_ephemeral())])),
+    other => other,
+  }
+}
+
+# Mark the last element of a JSON array as the cache breakpoint —
+# Anthropic caches the prefix up to and including the marked block.
+fn mark_last_cached(items :: List[jv.Json]) -> List[jv.Json] {
+  let n := list.len(items)
+  list.map(list.enumerate(items), fn (p :: (Int, jv.Json)) -> jv.Json {
+    match p {
+      (i, j) => if i == n - 1 {
+        cache_marked(j)
+      } else {
+        j
+      },
+    }
+  })
+}
+
+fn text_block(text :: Str) -> jv.Json {
+  JObj([("type", JStr("text")), ("text", JStr(text))])
+}
+
+fn encode_messages_cached(messages :: List[msg.Message]) -> List[jv.Json] {
+  let n := list.len(messages)
+  list.map(list.enumerate(messages), fn (p :: (Int, msg.Message)) -> jv.Json {
+    match p {
+      (i, m) => encode_message(m, i == n - 1),
+    }
+  })
+}
+
+fn encode_message(m :: msg.Message, cached :: Bool) -> jv.Json {
   match m {
-    UserMsg(text) => JObj([("role", JStr("user")), ("content", JStr(text))]),
+    UserMsg(text) => JObj([("role", JStr("user")), ("content", JList([maybe_cached(text_block(text), cached)]))]),
     AssistantMsg(text, calls) => if list.is_empty(calls) {
-      JObj([("role", JStr("assistant")), ("content", JStr(text))])
+      JObj([("role", JStr("assistant")), ("content", JList([maybe_cached(text_block(text), cached)]))])
     } else {
-      JObj([("role", JStr("assistant")), ("content", JList(list.map(calls, encode_tool_use_block)))])
+      let blocks := list.map(calls, encode_tool_use_block)
+      JObj([("role", JStr("assistant")), ("content", JList(if cached {
+        mark_last_cached(blocks)
+      } else {
+        blocks
+      }))])
     },
-    ToolMsg(call_id, content) => JObj([("role", JStr("user")), ("content", JList([JObj([("type", JStr("tool_result")), ("tool_use_id", JStr(call_id)), ("content", JStr(content))])]))]),
+    ToolMsg(call_id, content) => JObj([("role", JStr("user")), ("content", JList([maybe_cached(JObj([("type", JStr("tool_result")), ("tool_use_id", JStr(call_id)), ("content", JStr(content))]), cached)]))]),
     SystemMsg(_) => JObj([("role", JStr("user")), ("content", JStr(""))]),
+  }
+}
+
+fn maybe_cached(j :: jv.Json, cached :: Bool) -> jv.Json {
+  if cached {
+    cache_marked(j)
+  } else {
+    j
   }
 }
 
