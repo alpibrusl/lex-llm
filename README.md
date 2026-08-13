@@ -142,6 +142,28 @@ The loop validates tool arguments against the schema before calling
 `execute`. Invalid args are returned to the model as an error so it can
 self-correct on the next turn.
 
+### Human approval gating
+
+Mark any tool with `t.with_approval(tool, scope)` and the dispatch layer
+blocks on a human decision — lex-lang's `[approval]` host boundary —
+before every execution:
+
+```lex
+let dangerous := t.with_approval(submit_order_tool(), "payment")
+```
+
+Approved → the tool runs (the operator's answer is available to the tool
+as the `_approval_answer` arg). Denied, or no `ApprovalSink` configured
+in the host → the model gets a recoverable `approval_denied` error. The
+scope is checked against `--allow-approval` at run time, so an operator
+can grant `payment` approvals without opening other channels.
+
+`human.make_ask_human_tool(scope)` is the canonical answer-carrying
+example: the whole tool is the question→answer round-trip, so its body
+just returns the injected answer. How a human is actually reached
+(stdin, dashboard, chat) is the embedding host's `ApprovalSink`, not
+Lex-side code. Requires the `[approval]` effect (lex-lang > v0.10.9).
+
 ---
 
 ## Structured output
@@ -182,9 +204,12 @@ One attempt + one automatic retry on validation failure.
 | `[net]` | HTTP calls via `http.stream_lines` |
 | `[llm]` | Semantic annotation for LLM-inference; enables independent policy gating |
 | `[io]`, `[proc]` | Available to tools that need filesystem or shell access |
+| `[approval]` | Human decision points — dispatch blocks on `std.approval.request` for approval-scoped tools |
 
-`ag.run_loop` declares `[net, llm, io, proc]`. Pass `--allow-effects net,llm`
-for tool-free agents; add `io,proc` if any tool needs them.
+`ag.run_loop` declares `[net, llm, io, proc, approval]`. Pass
+`--allow-effects net,llm,approval` for tool-free agents; add `io,proc` if
+any tool needs them, and `--allow-approval scope1,scope2` to restrict
+which approval channels tools may open.
 
 Pure tools (no actual I/O) satisfy `[net, io, proc]` structurally — the
 type checker accepts a closure that never uses those effects.
