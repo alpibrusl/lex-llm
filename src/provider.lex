@@ -71,6 +71,11 @@ fn ollama(m :: Str) -> ModelRef {
   { provider: "ollama", model: m }
 }
 
+# lex-moe (local, OpenAI-compatible `moe serve`; see providers.moe_local/moe_at)
+fn moe(m :: Str) -> ModelRef {
+  { provider: "moe", model: m }
+}
+
 # vLLM (local or remote, OpenAI-compatible)
 fn vllm(m :: Str) -> ModelRef {
   { provider: "vllm", model: m }

@@ -131,6 +131,35 @@ fn vllm_at(host :: Str) -> prov.Provider {
   oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions") })
 }
 
+# ── lex-moe (self-hosted, streamed-from-NVMe MoE inference) ──────────────────
+# `moe serve --store DIR --budget-mb N` exposes the same OpenAI-shaped
+# POST /v1/chat/completions this adapter already drives (default 127.0.0.1:8080,
+# no key). Today it is plain-chat only: the server accepts and ignores unknown
+# request fields, so a `tools` list sent here is silently dropped and replies
+# never carry `tool_calls` — the oai.lex parser just sees an assistant text
+# reply. Tool-calling and a real (non-placeholder) chat template are tracked
+# upstream (alpibrusl/lex-moe#44, #45); once those land this adapter starts
+# working for agent loops with no lex-llm-side change, since the wire shape
+# is unchanged.
+fn moe_model() -> [env] Str {
+  match env.get("MOE_MODEL") {
+    None => "default",
+    Some(m) => m,
+  }
+}
+
+fn moe_local() -> [env] prov.Provider {
+  let base_url := match env.get("MOE_BASE_URL") {
+    None => "http://127.0.0.1:8080/v1/chat/completions",
+    Some(u) => u,
+  }
+  oai.make_provider({ api_key: "", base_url: base_url })
+}
+
+fn moe_at(host :: Str) -> prov.Provider {
+  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions") })
+}
+
 # ── MLX (Apple Silicon) ───────────────────────────────────────────────────────
 # mlx_lm.server exposes an OpenAI-compatible POST /v1/chat/completions endpoint
 # with tool-calling support, so the OpenAI adapter drives it unchanged. Runs on
@@ -211,11 +240,13 @@ fn vertex_with_config(access_token :: Str, project_id :: Str, location :: Str) -
 # provider_name/provider_url/provider_key (e.g. lex-soft AgentConfig) pass them
 # straight through.
 #
-#   name  : "opencode-go" | "mlx" | "ollama" | "vllm" | "openai" | "anthropic" |
-#           "google" | "mistral" | "vertex" (any other value → vertex).
-#   url   : base URL/host for local & OpenAI-compatible servers (mlx/ollama/vllm);
-#           the OpenCode Go endpoint override for "opencode-go" (empty → default);
-#           the Vertex location for "vertex"; ignored by cloud-key providers.
+#   name  : "opencode-go" | "mlx" | "ollama" | "vllm" | "moe" | "openai" |
+#           "anthropic" | "google" | "mistral" | "vertex" (any other value →
+#           vertex).
+#   url   : base URL/host for local & OpenAI-compatible servers
+#           (mlx/ollama/vllm/moe); the OpenCode Go endpoint override for
+#           "opencode-go" (empty → default); the Vertex location for
+#           "vertex"; ignored by cloud-key providers.
 #   key   : API key for cloud providers; the OpenCode key for "opencode-go"; for
 #           "vertex" it is the packed "<access_token>|||<project_id>"; ignored for
 #           local providers.
@@ -232,33 +263,37 @@ fn select_provider(name :: Str, url :: Str, key :: Str) -> prov.Provider {
         if name == "vllm" {
           vllm_at(url)
         } else {
-          if name == "openai" {
-            openai_with_key(key)
+          if name == "moe" {
+            moe_at(url)
           } else {
-            if name == "anthropic" {
-              anthropic_with_key(key)
+            if name == "openai" {
+              openai_with_key(key)
             } else {
-              if name == "google" {
-                google_with_key(key)
+              if name == "anthropic" {
+                anthropic_with_key(key)
               } else {
-                if name == "mistral" {
-                  mistral_with_key(key)
+                if name == "google" {
+                  google_with_key(key)
                 } else {
-                  let parts := str.split(key, "|||")
-                  let token := match list.head(parts) {
-                    Some(s) => s,
-                    None => "",
-                  }
-                  let project := match str.strip_prefix(key, str.concat(token, "|||")) {
-                    Some(s) => s,
-                    None => "",
-                  }
-                  let location := if str.is_empty(url) {
-                    "eu"
+                  if name == "mistral" {
+                    mistral_with_key(key)
                   } else {
-                    url
+                    let parts := str.split(key, "|||")
+                    let token := match list.head(parts) {
+                      Some(s) => s,
+                      None => "",
+                    }
+                    let project := match str.strip_prefix(key, str.concat(token, "|||")) {
+                      Some(s) => s,
+                      None => "",
+                    }
+                    let location := if str.is_empty(url) {
+                      "eu"
+                    } else {
+                      url
+                    }
+                    vertex_with_config(token, project, location)
                   }
-                  vertex_with_config(token, project, location)
                 }
               }
             }
