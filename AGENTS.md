@@ -35,7 +35,31 @@ AgentDef
 | `Tool` | `src/tool.lex` | `execute :: (Json) -> [net, io, proc] Result[Json, Errors]` |
 | `Delta` | `src/delta.lex` | streaming event: `TextChunk`, `ToolCallBegin`, `ToolArgChunk`, `FinishDelta` |
 | `Step` | `src/delta.lex` | agent step: `StepDelta`, `StepToolExec`, `StepToolResult`, `StepDone` |
-| `Message` | `src/message.lex` | `UserMsg`, `SystemMsg`, `AssistantMsg`, `ToolMsg` |
+| `Message` | `src/message.lex` | `UserMsg`, `SystemMsg`, `AssistantMsg`, `ToolMsg`, `UserPartsMsg` |
+| `Part` | `src/message.lex` | multimodal turn piece: `TextPart`, `ImagePart` |
+| `Image` | `src/message.lex` | `ImageB64(mime, base64)` — inline bytes; no URL variant (see note) |
+
+### Images
+
+Build a multimodal turn with `msg.user_with_images(text, images)`, or
+`msg.user_with_jpeg(text, jpeg_b64)` for the single-frame case. Images are
+inline base64 with an explicit media type — deliberately no URL variant,
+because Gemini's `inline_data` has no URL form and a url case would
+type-check everywhere then fail at runtime on some providers. Encode bytes
+with `crypto.base64_encode` (standard alphabet — NOT `base64url_encode`,
+whose output providers reject).
+
+Each adapter maps `UserPartsMsg` to its own wire shape: OpenAI a `data:` URI
+in an `image_url` part, Anthropic a typed base64 `source` block, Gemini
+(google/vertex) an `inline_data` part, Ollama a sibling `images` array of
+bare base64 with `content` left a plain string. `tests/test_image_parts.lex`
+pins all five.
+
+**Adding a provider, or a Message variant?** Lex does not check match
+exhaustiveness: a `match` missing an arm type-checks clean, passes
+`lex check --strict`, and panics at runtime with `non-exhaustive match` the
+first time that variant arrives. The test file is the only thing standing in
+for the compiler here — extend it.
 
 ---
 

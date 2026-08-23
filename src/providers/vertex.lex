@@ -192,6 +192,16 @@ fn encode_content(m :: msg.Message) -> jv.Json {
     },
     ToolMsg(call_id, content) => JObj([("role", JStr("user")), ("parts", JList([JObj([("functionResponse", JObj([("name", JStr(fn_name_from_id(call_id))), ("response", JObj([("output", JStr(content))]))]))])]))]),
     SystemMsg(_) => JObj([("role", JStr("user")), ("parts", JList([JObj([("text", JStr(""))])]))]),
+    UserPartsMsg(parts) => JObj([("role", JStr("user")), ("parts", JList(list.map(parts, encode_part)))]),
+  }
+}
+
+# Same Gemini part shape as the google adapter: {text} or {inline_data}
+# carrying raw base64 plus its media type.
+fn encode_part(p :: msg.Part) -> jv.Json {
+  match p {
+    TextPart(text) => JObj([("text", JStr(text))]),
+    ImagePart(ImageB64(mime, data)) => JObj([("inline_data", JObj([("mime_type", JStr(mime)), ("data", JStr(data))]))]),
   }
 }
 

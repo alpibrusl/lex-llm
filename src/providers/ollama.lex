@@ -92,7 +92,30 @@ fn encode_message(m :: msg.Message) -> jv.Json {
       JObj([("role", JStr("assistant")), ("content", JStr("")), ("tool_calls", JList(list.map(calls, encode_tool_call)))])
     },
     ToolMsg(call_id, content) => JObj([("role", JStr("tool")), ("tool_call_id", JStr(call_id)), ("content", JStr(content))]),
+    UserPartsMsg(parts) => JObj([("role", JStr("user")), ("content", JStr(parts_text(parts))), ("images", JList(parts_images(parts)))]),
   }
+}
+
+fn parts_text(parts :: List[msg.Part]) -> Str {
+  list.fold(parts, "", fn (acc :: Str, p :: msg.Part) -> Str {
+    match p {
+      TextPart(t) => if str.is_empty(acc) {
+        t
+      } else {
+        str.concat(acc, str.concat("\n", t))
+      },
+      ImagePart(_) => acc,
+    }
+  })
+}
+
+fn parts_images(parts :: List[msg.Part]) -> List[jv.Json] {
+  list.fold(parts, [], fn (acc :: List[jv.Json], p :: msg.Part) -> List[jv.Json] {
+    match p {
+      ImagePart(ImageB64(_, data)) => list.concat(acc, [JStr(data)]),
+      TextPart(_) => acc,
+    }
+  })
 }
 
 fn encode_tool_call(call :: msg.ToolCall) -> jv.Json {

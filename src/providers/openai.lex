@@ -89,7 +89,20 @@ fn encode_message(m :: msg.Message) -> jv.Json {
       JObj([("role", JStr("assistant")), ("content", JNull), ("tool_calls", JList(list.map(calls, encode_tool_call)))])
     },
     ToolMsg(call_id, content) => JObj([("role", JStr("tool")), ("tool_call_id", JStr(call_id)), ("content", JStr(content))]),
+    UserPartsMsg(parts) => JObj([("role", JStr("user")), ("content", JList(list.map(parts, encode_part)))]),
   }
+}
+
+# OpenAI carries images as a `data:` URI inside an image_url part.
+fn encode_part(p :: msg.Part) -> jv.Json {
+  match p {
+    TextPart(text) => JObj([("type", JStr("text")), ("text", JStr(text))]),
+    ImagePart(ImageB64(mime, data)) => JObj([("type", JStr("image_url")), ("image_url", JObj([("url", data_uri(mime, data))]))]),
+  }
+}
+
+fn data_uri(mime :: Str, data :: Str) -> jv.Json {
+  JStr(str.concat("data:", str.concat(mime, str.concat(";base64,", data))))
 }
 
 fn encode_tool_call(call :: msg.ToolCall) -> jv.Json {

@@ -109,6 +109,18 @@ fn encode_content(m :: msg.Message) -> jv.Json {
     },
     ToolMsg(call_id, content) => JObj([("role", JStr("user")), ("parts", JList([JObj([("functionResponse", JObj([("name", JStr(call_id)), ("response", JObj([("output", JStr(content))]))]))])]))]),
     SystemMsg(_) => JObj([("role", JStr("user")), ("parts", JList([JObj([("text", JStr(""))])]))]),
+    UserPartsMsg(parts) => JObj([("role", JStr("user")), ("parts", JList(list.map(parts, encode_part)))]),
+  }
+}
+
+# Gemini already models a turn as a list of parts, so a multimodal turn is
+# the natural shape here: a text part is {text}, an image is {inline_data}
+# with the media type beside the bytes. Note inline_data takes raw base64
+# with no data: prefix.
+fn encode_part(p :: msg.Part) -> jv.Json {
+  match p {
+    TextPart(text) => JObj([("text", JStr(text))]),
+    ImagePart(ImageB64(mime, data)) => JObj([("inline_data", JObj([("mime_type", JStr(mime)), ("data", JStr(data))]))]),
   }
 }
 

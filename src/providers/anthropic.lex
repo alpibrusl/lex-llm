@@ -112,6 +112,16 @@ fn encode_message(m :: msg.Message) -> jv.Json {
     },
     ToolMsg(call_id, content) => JObj([("role", JStr("user")), ("content", JList([JObj([("type", JStr("tool_result")), ("tool_use_id", JStr(call_id)), ("content", JStr(content))])]))]),
     SystemMsg(_) => JObj([("role", JStr("user")), ("content", JStr(""))]),
+    UserPartsMsg(parts) => JObj([("role", JStr("user")), ("content", JList(list.map(parts, encode_part)))]),
+  }
+}
+
+# Anthropic takes an image as a typed source block with the media type
+# carried separately — not a data: URI the way OpenAI does it.
+fn encode_part(p :: msg.Part) -> jv.Json {
+  match p {
+    TextPart(text) => JObj([("type", JStr("text")), ("text", JStr(text))]),
+    ImagePart(ImageB64(mime, data)) => JObj([("type", JStr("image")), ("source", JObj([("type", JStr("base64")), ("media_type", JStr(mime)), ("data", JStr(data))]))]),
   }
 }
 
