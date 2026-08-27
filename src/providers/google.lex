@@ -48,15 +48,13 @@ fn make_provider(config :: GoogleConfig) -> prov.Provider {
 fn chat(config :: GoogleConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let url := gemini_url(model.model, config.api_key)
   let body := build_request(messages, tools)
-  let raw_lines := match http.post(url, bytes.from_str(body), "application/json") {
-    Err(_) => iter.from_list([]),
-    Ok(r) => iter.from_list(str.split(match bytes.to_str(r.body) {
-      Err(_) => "",
-      Ok(s) => s,
-    }, "\n")),
+  match http.post(url, bytes.from_str(body), "application/json") {
+    Err(_) => iter.from_list(d.provider_error("request failed or timed out")),
+    Ok(r) => match bytes.to_str(r.body) {
+      Err(_) => iter.from_list(d.provider_error("response body was not valid UTF-8")),
+      Ok(s) => parse_stream(str.split(s, "\n")),
+    },
   }
-  let lines := iter.to_list(raw_lines)
-  parse_stream(lines)
 }
 
 # ---- Request building --------------------------------------------

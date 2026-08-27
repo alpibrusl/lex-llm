@@ -59,15 +59,13 @@ fn chat(config :: AnthropicConfig, model :: prov.ModelRef, messages :: List[msg.
     (_, ms) => ms,
   }
   let body := build_request(model, sys, user_msgs, tools)
-  let lines := match http.post(config.base_url, bytes.from_str(body), "application/json") {
-    Err(_) => iter.from_list([]),
-    Ok(r) => iter.from_list(str.split(match bytes.to_str(r.body) {
-      Err(_) => "",
-      Ok(s) => s,
-    }, "\n")),
+  match http.post(config.base_url, bytes.from_str(body), "application/json") {
+    Err(_) => iter.from_list(d.provider_error("request failed or timed out")),
+    Ok(r) => match bytes.to_str(r.body) {
+      Err(_) => iter.from_list(d.provider_error("response body was not valid UTF-8")),
+      Ok(s) => parse_stream(sse.data_payloads(iter.from_list(str.split(s, "\n")))),
+    },
   }
-  let payloads := sse.data_payloads(lines)
-  parse_stream(payloads)
 }
 
 # ---- Request building --------------------------------------------

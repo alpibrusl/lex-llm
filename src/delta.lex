@@ -7,6 +7,8 @@
 
 import "./message" as msg
 
+import "std.str" as str
+
 # Provider-level streaming chunk.
 # UsageDelta carries (prompt_tokens, completion_tokens, total_tokens) from the
 # provider's own response when it reports them (e.g. OpenAI-compatible chat
@@ -39,5 +41,24 @@ fn finish_reason(delta :: Delta) -> Option[Str]
     FinishDelta(r) => Some(r),
     _ => None,
   }
+}
+
+# The delta sequence a provider emits when the call itself FAILED, as opposed
+# to succeeding with nothing to say. Providers used to return [] for a timeout,
+# a 5xx, an unreadable body and a genuinely empty answer alike; agent.run_steps
+# reads an empty delta list as finish="stop" with empty content, so the caller
+# logged the transport failure AS the model's own output and nothing in the
+# trail told the two apart. Emitting the reason as text keeps a failed call
+# diagnosable without adding an error channel every caller must learn about.
+#
+# Deliberately at the end of this file: a comment placed directly after the
+# `type` declarations above is silently deleted by lex fmt 0.10.11
+# (lex-lang#724).
+fn provider_error(reason :: Str) -> List[Delta]
+  examples {
+    provider_error("boom") => [TextChunk("[provider error: boom]"), FinishDelta("provider_error")]
+  }
+{
+  [TextChunk(str.join(["[provider error: ", reason, "]"], "")), FinishDelta("provider_error")]
 }
 
