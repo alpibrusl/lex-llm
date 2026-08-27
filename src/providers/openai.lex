@@ -65,14 +65,14 @@ fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Mes
   let hdrs := map.set(map.set(map.new(), "content-type", "application/json"), "authorization", str.concat("Bearer ", config.api_key))
   let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }
   let deltas := match http.send(req) {
-    Err(_) => [TextChunk("[provider error: request failed or timed out]"), FinishDelta("provider_error")],
+    Err(_) => d.provider_error("request failed or timed out"),
     Ok(r) => if r.status >= 400 {
-      [TextChunk(str.concat("[provider error: HTTP ", str.concat(int.to_str(r.status), "]"))), FinishDelta("provider_error")]
+      d.provider_error(str.concat("HTTP ", int.to_str(r.status)))
     } else {
       match bytes.to_str(r.body) {
-        Err(_) => [TextChunk("[provider error: response body was not valid UTF-8]"), FinishDelta("provider_error")],
+        Err(_) => d.provider_error("response body was not valid UTF-8"),
         Ok(s) => match jv.parse_into_errors(s) {
-          Err(_) => [TextChunk("[provider error: response was not valid JSON]"), FinishDelta("provider_error")],
+          Err(_) => d.provider_error("response was not valid JSON"),
           Ok(j) => parse_completion(j),
         },
       }

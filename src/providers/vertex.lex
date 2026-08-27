@@ -91,14 +91,13 @@ fn chat(config :: VertexConfig, model :: prov.ModelRef, messages :: List[msg.Mes
   let url := vertex_url(config, model.model)
   let body := build_request(messages, tools)
   let req := http.with_header(http.with_header({ method: "POST", url: url, headers: map.new(), body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }, "Content-Type", "application/json"), "Authorization", str.concat("Bearer ", config.access_token))
-  let body_str := match http.send(req) {
-    Err(_) => "",
+  match http.send(req) {
+    Err(_) => iter.from_list(d.provider_error("request failed or timed out")),
     Ok(r) => match bytes.to_str(r.body) {
-      Err(_) => "",
-      Ok(s) => s,
+      Err(_) => iter.from_list(d.provider_error("response body was not valid UTF-8")),
+      Ok(s) => parse_stream(s),
     },
   }
-  parse_stream(body_str)
 }
 
 # ── Request building ──────────────────────────────────────────────────────────
