@@ -47,19 +47,32 @@ fn make_provider(config :: OpenAIConfig) -> prov.Provider {
   } }
 }
 
+# chat -- one non-streaming completion, decoded into Deltas.
+#
+# timeout_ms is 600s, not the 120s this used to carry. A reasoning model
+# answering a build prompt routinely spends 4+ minutes and 7k+ completion
+# tokens on a single call; at 120s http.send aborted mid-flight while the
+# upstream went on to return a perfectly good answer that nothing was left
+# listening for.
+#
+# Every failure path below used to collapse to [] -- an empty delta list,
+# which agent.run_steps reads as finish="stop" with empty content. That made
+# a timeout, a 500, and a model that genuinely said nothing indistinguishable:
+# the caller logged an empty answer either way and reported it as the model's
+# output. They now surface as text so the failure reaches the trail and a human.
 fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let body := build_request(model, messages, tools)
   let hdrs := map.set(map.set(map.new(), "content-type", "application/json"), "authorization", str.concat("Bearer ", config.api_key))
-  let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(120000) }
+  let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }
   let deltas := match http.send(req) {
-    Err(_) => [],
+    Err(_) => [TextChunk("[provider error: request failed or timed out]"), FinishDelta("provider_error")],
     Ok(r) => if r.status >= 400 {
-      []
+      [TextChunk(str.concat("[provider error: HTTP ", str.concat(int.to_str(r.status), "]"))), FinishDelta("provider_error")]
     } else {
       match bytes.to_str(r.body) {
-        Err(_) => [],
+        Err(_) => [TextChunk("[provider error: response body was not valid UTF-8]"), FinishDelta("provider_error")],
         Ok(s) => match jv.parse_into_errors(s) {
-          Err(_) => [],
+          Err(_) => [TextChunk("[provider error: response was not valid JSON]"), FinishDelta("provider_error")],
           Ok(j) => parse_completion(j),
         },
       }

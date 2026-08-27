@@ -90,7 +90,7 @@ fn make_provider(config :: VertexConfig) -> prov.Provider {
 fn chat(config :: VertexConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let url := vertex_url(config, model.model)
   let body := build_request(messages, tools)
-  let req := http.with_header(http.with_header({ method: "POST", url: url, headers: map.new(), body: Some(bytes.from_str(body)), timeout_ms: Some(60000) }, "Content-Type", "application/json"), "Authorization", str.concat("Bearer ", config.access_token))
+  let req := http.with_header(http.with_header({ method: "POST", url: url, headers: map.new(), body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }, "Content-Type", "application/json"), "Authorization", str.concat("Bearer ", config.access_token))
   let body_str := match http.send(req) {
     Err(_) => "",
     Ok(r) => match bytes.to_str(r.body) {

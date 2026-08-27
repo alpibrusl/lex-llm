@@ -55,7 +55,7 @@ fn make_provider(config :: OllamaConfig) -> prov.Provider {
 fn chat(config :: OllamaConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let body := build_request(model, messages, tools)
   let hdrs := map.set(map.set(map.new(), "content-type", "application/json"), "connection", "close")
-  let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(120000) }
+  let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }
   let lines := match http.send(req) {
     Err(_) => [],
     Ok(r) => if r.status >= 400 {
