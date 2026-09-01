@@ -112,13 +112,36 @@ fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Mes
 
 # ---- Request building --------------------------------------------
 fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
-  let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(false)), ("max_tokens", JInt(8192))]
+  let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(false)), ("max_tokens", JInt(8192)), ("prompt_cache_key", JStr(prompt_cache_key(model, tools)))]
   let with_tools := if list.is_empty(tools) {
     base
   } else {
     list.concat(base, [("tools", JList(list.map(tools, t.to_openai_json))), ("tool_choice", JStr("auto"))])
   }
   jv.stringify(JObj(with_tools))
+}
+
+# OpenAI's own prompt caching is fully automatic server-side for prompts
+# >=1024 tokens -- there's no cache_control-style opt-in like Anthropic's.
+# The one client-observable lever is `prompt_cache_key`: a stable string
+# that helps OpenAI route repeated requests to the same cache-warm
+# backend instead of load-balancing them apart, which otherwise costs
+# cache hits under concurrent/high-throughput traffic. Deriving it from
+# (model, tool names) rather than anything per-call keeps it identical
+# across every turn of the same agent's loop -- exactly the repeated,
+# same-shape traffic prompt caching is for -- while still separating
+# e.g. the build agent's calls from the explore agent's.
+#
+# This adapter also drives OpenCode Go, vLLM, MLX, and the LiteLLM proxy
+# (all OpenAI-wire-compatible); an unrecognized field in a JSON body is
+# harmless on any spec-conforming server, so this benefits OpenAI/OpenCode
+# and is a no-op elsewhere rather than something that needs gating per
+# backend.
+fn prompt_cache_key(model :: prov.ModelRef, tools :: List[t.Tool]) -> Str {
+  let names := list.map(tools, fn (tool :: t.Tool) -> Str {
+    tool.name
+  })
+  str.concat(model.model, str.concat(":", str.join(names, ",")))
 }
 
 fn encode_message(m :: msg.Message) -> jv.Json {
