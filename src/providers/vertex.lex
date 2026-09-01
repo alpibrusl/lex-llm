@@ -84,7 +84,18 @@ fn gemini_35_pro() -> prov.ModelRef {
 fn make_provider(config :: VertexConfig) -> prov.Provider {
   { name: "vertex", chat: fn (model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
     chat(config, model, messages, tools)
-  } }
+  }, stream: None }
+}
+
+# stream: None — Vertex uses the same Gemini response shape as the google
+# adapter, with the same JSON-array framing, and additionally needs a
+# refreshed OAuth access token per call. See the note in google.lex.
+fn streaming_supported() -> Bool
+  examples {
+    streaming_supported() => false
+  }
+{
+  false
 }
 
 fn chat(config :: VertexConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {

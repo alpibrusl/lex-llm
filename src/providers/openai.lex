@@ -1,7 +1,14 @@
 # lex-llm — OpenAI Chat Completions adapter
 #
 # Implements Provider.chat against POST /v1/chat/completions with
-# stream:false. Uses http.send with an Authorization: Bearer header.
+# stream:false, and the optional Provider.stream half against the same
+# endpoint with stream:true. Uses an Authorization: Bearer header.
+#
+# This adapter is the one every OpenAI-compatible backend routes through —
+# LiteLLM, vLLM, lex-moe, mlx_lm.server, opencode-go — so the streaming half
+# added here reaches all of them at once, and any of them that does not in
+# fact honour stream:true simply produces no Deltas until the socket closes,
+# which is the buffered behaviour it had before.
 #
 # Supports any model accessible via the Chat Completions API:
 # GPT-4o, GPT-4o-mini, o1, o3-mini, etc.
@@ -31,6 +38,8 @@ import "std.map" as map
 
 import "std.int" as int
 
+import "../sse" as sse
+
 fn default_base_url() -> Str {
   "https://api.openai.com/v1/chat/completions"
 }
@@ -44,7 +53,27 @@ fn default_config(api_key :: Str) -> OpenAIConfig {
 fn make_provider(config :: OpenAIConfig) -> prov.Provider {
   { name: "openai", chat: fn (model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
     chat(config, model, messages, tools)
-  } }
+  }, stream: Some({ open: fn (model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Result[Stream[Str], Str] {
+    open_stream(config, model, messages, tools)
+  }, init: JList([]), step: stream_step }) }
+}
+
+fn stream_headers(api_key :: Str) -> Map[Str, Str] {
+  let base := map.set(map.set(map.new(), "content-type", "application/json"), "accept", "text/event-stream")
+  if str.is_empty(api_key) {
+    base
+  } else {
+    map.set(base, "authorization", str.concat("Bearer ", api_key))
+  }
+}
+
+# The api_key is empty for the local backends (vLLM, moe, mlx) that route
+# through this adapter; sending `Authorization: Bearer ` to one of those is
+# at best ignored and at worst a 401, so the header is omitted rather than
+# sent blank -- which is also what the non-streaming path should do, but
+# changing that is not this commit's business.
+fn open_stream(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Result[Stream[Str], Str] {
+  http.stream_lines(config.base_url, stream_headers(config.api_key), build_stream_request(model, messages, tools))
 }
 
 # chat -- one non-streaming completion, decoded into Deltas.
@@ -336,6 +365,242 @@ fn str_field(j :: jv.Json, key :: Str) -> Str {
   match jv.get_field(j, key) {
     Some(JStr(s)) => s,
     _ => "",
+  }
+}
+
+# ---- Streaming request + step ------------------------------------
+#
+# Same body as build_request with stream:true, plus stream_options so the
+# final chunk carries a usage object — without it a streamed turn reports no
+# token counts at all, and delta.UsageDelta's contract is that absence means
+# "not reported", so the cost of a streamed turn would silently vanish from
+# the trail. Backends that don't know stream_options ignore the field.
+fn build_stream_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
+  let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(true)), ("stream_options", JObj([("include_usage", JBool(true))])), ("max_tokens", JInt(8192))]
+  let with_tools := if list.is_empty(tools) {
+    base
+  } else {
+    list.concat(base, [("tools", JList(list.map(tools, t.to_openai_json))), ("tool_choice", JStr("auto"))])
+  }
+  jv.stringify(JObj(with_tools))
+}
+
+# Streaming chunk shape:
+#   {"choices":[{"delta":{"content":"Hel"},"finish_reason":null}]}
+#   {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",
+#       "function":{"name":"read","arguments":"{\"pa"}}]},"finish_reason":null}]}
+#   {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+#   {"choices":[],"usage":{...}}                        <- with stream_options
+#
+# A tool call arrives split across chunks: the first carries id and name, the
+# rest carry only `index` and a fragment of `arguments`. So the parser state
+# is the ids seen so far, positionally — index 0 is the first element — which
+# is what lets a later ToolArgChunk be routed to the call it belongs to.
+# ToolCallBegin is emitted once, on the chunk that first names the call.
+fn state_ids(state :: jv.Json) -> List[Str]
+  examples {
+    state_ids(JList([JStr("a"), JStr("b")])) => ["a", "b"],
+    state_ids(JList([])) => [],
+    state_ids(JNull) => []
+  }
+{
+  match state {
+    JList(xs) => list.fold(xs, [], fn (acc :: List[Str], x :: jv.Json) -> List[Str] {
+      match x {
+        JStr(s) => list.concat(acc, [s]),
+        _ => acc,
+      }
+    }),
+    _ => [],
+  }
+}
+
+fn encode_ids(ids :: List[Str]) -> jv.Json
+  examples {
+    encode_ids(["a"]) => JList([JStr("a")]),
+    encode_ids([]) => JList([])
+  }
+{
+  JList(list.map(ids, fn (s :: Str) -> jv.Json {
+    JStr(s)
+  }))
+}
+
+# Read the id at `idx`, or "" when the stream has not named that call yet.
+fn id_at(ids :: List[Str], idx :: Int) -> Str
+  examples {
+    id_at(["a", "b"], 1) => "b",
+    id_at(["a"], 3) => "",
+    id_at([], 0) => ""
+  }
+{
+  let found := list.fold(ids, (0, ""), fn (acc :: (Int, Str), s :: Str) -> (Int, Str) {
+    match acc {
+      (i, hit) => if i == idx {
+        (i + 1, s)
+      } else {
+        (i + 1, hit)
+      },
+    }
+  })
+  match found {
+    (_, hit) => hit,
+  }
+}
+
+# Grow `ids` so position `idx` holds `id`, padding intervening slots.
+fn set_id(ids :: List[Str], idx :: Int, id :: Str) -> List[Str]
+  examples {
+    set_id([], 0, "a") => ["a"],
+    set_id(["a"], 1, "b") => ["a", "b"],
+    set_id(["a"], 0, "z") => ["z"],
+    set_id([], 2, "c") => ["", "", "c"]
+  }
+{
+  let kept := list.fold(ids, (0, []), fn (acc :: (Int, List[Str]), s :: Str) -> (Int, List[Str]) {
+    match acc {
+      (i, out) => if i == idx {
+        (i + 1, list.concat(out, [id]))
+      } else {
+        (i + 1, list.concat(out, [s]))
+      },
+    }
+  })
+  match kept {
+    (n, out) => if n > idx {
+      out
+    } else {
+      list.concat(out, list.concat(pad(idx - n), [id]))
+    },
+  }
+}
+
+fn pad(n :: Int) -> List[Str]
+  examples {
+    pad(0) => [],
+    pad(2) => ["", ""]
+  }
+{
+  if n <= 0 {
+    []
+  } else {
+    list.concat([""], pad(n - 1))
+  }
+}
+
+fn stream_step(state :: jv.Json, line :: Str) -> (jv.Json, List[d.Delta])
+  examples {
+    stream_step(JList([]), "") => (JList([]), []),
+    stream_step(JList([]), ": ping") => (JList([]), []),
+    stream_step(JList([]), "data: [DONE]") => (JList([]), []),
+    stream_step(JList([]), "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}") => (JList([]), [TextChunk("Hi")]),
+    stream_step(JList([]), "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}") => (JList([]), [FinishDelta("stop")])
+  }
+{
+  match sse.parse_data_line(sse.strip_cr(line)) {
+    None => (state, []),
+    Some(payload) => if payload == "[DONE]" {
+      (state, [])
+    } else {
+      match jv.parse_into_errors(payload) {
+        Err(_) => (state, []),
+        Ok(j) => step_chunk(state, j),
+      }
+    },
+  }
+}
+
+fn step_chunk(state :: jv.Json, j :: jv.Json) -> (jv.Json, List[d.Delta]) {
+  let usage_deltas := parse_usage(j)
+  match jv.get_field(j, "choices") {
+    Some(JList(xs)) => match first(xs) {
+      Some(choice) => {
+        let finish_deltas := match jv.get_field(choice, "finish_reason") {
+          Some(JStr(r)) => [FinishDelta(r)],
+          _ => [],
+        }
+        match step_choice_delta(state, choice) {
+          (next_state, delta_deltas) => (next_state, list.concat(usage_deltas, list.concat(delta_deltas, finish_deltas))),
+        }
+      },
+      None => (state, usage_deltas),
+    },
+    _ => (state, usage_deltas),
+  }
+}
+
+fn step_choice_delta(state :: jv.Json, choice :: jv.Json) -> (jv.Json, List[d.Delta]) {
+  match jv.get_field(choice, "delta") {
+    None => (state, []),
+    Some(dj) => match jv.get_field(dj, "tool_calls") {
+      Some(JList(calls)) => step_tool_calls(state, calls),
+      _ => (state, step_text(dj)),
+    },
+  }
+}
+
+# `content` on a streamed chunk is the visible text; reasoning models put
+# their chain-of-thought in `reasoning` / `reasoning_content` and leave
+# content empty, exactly as on the buffered path. Unlike the buffered path
+# this does NOT try to recover a tool call embedded in prose (see
+# content_tool_call) — that heuristic parses a whole JSON object, and a
+# streamed fragment is a prefix of one. A model that answers that way is
+# still handled correctly by the buffered path.
+fn step_text(dj :: jv.Json) -> List[d.Delta] {
+  let text := content_or_reasoning(dj)
+  if str.is_empty(text) {
+    []
+  } else {
+    [TextChunk(text)]
+  }
+}
+
+fn step_tool_calls(state :: jv.Json, calls :: List[jv.Json]) -> (jv.Json, List[d.Delta]) {
+  let folded := list.fold(calls, (state_ids(state), []), fn (acc :: (List[Str], List[d.Delta]), cj :: jv.Json) -> (List[Str], List[d.Delta]) {
+    match acc {
+      (ids, out) => {
+        let idx := match jv.get_field(cj, "index") {
+          Some(JInt(i)) => i,
+          _ => 0,
+        }
+        let known := id_at(ids, idx)
+        let named := str_field(cj, "id")
+        let fname := match jv.get_field(cj, "function") {
+          Some(fj) => str_field(fj, "name"),
+          None => "",
+        }
+        let id := if str.is_empty(known) {
+          if str.is_empty(named) {
+            str.concat("call_", int.to_str(idx))
+          } else {
+            named
+          }
+        } else {
+          known
+        }
+        let begin := if str.is_empty(known) {
+          [ToolCallBegin(id, fname)]
+        } else {
+          []
+        }
+        let args := match jv.get_field(cj, "function") {
+          Some(fj) => match jv.get_field(fj, "arguments") {
+            Some(JStr(a)) => a,
+            _ => "",
+          },
+          None => "",
+        }
+        let arg_deltas := if str.is_empty(args) {
+          []
+        } else {
+          [ToolArgChunk(id, args)]
+        }
+        (set_id(ids, idx, id), list.concat(out, list.concat(begin, arg_deltas)))
+      },
+    }
+  })
+  match folded {
+    (ids, out) => (encode_ids(ids), out),
   }
 }
 
