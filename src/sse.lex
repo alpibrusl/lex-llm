@@ -14,6 +14,25 @@ import "std.list" as list
 
 import "std.map" as map
 
+# Drop a trailing CR.
+#
+# http.stream_lines splits on LF and leaves the CR of a CRLF pair on the end
+# of the line. SSE is specified with CRLF, so a payload that reaches
+# jv.parse with a stray CR fails to parse and the whole chunk is silently
+# dropped — every adapter's step function needs this before parsing.
+fn strip_cr(line :: Str) -> Str
+  examples {
+    strip_cr("data: {}\r") => "data: {}",
+    strip_cr("data: {}") => "data: {}",
+    strip_cr("") => ""
+  }
+{
+  match str.strip_suffix(line, "\r") {
+    Some(rest) => rest,
+    None => line,
+  }
+}
+
 # Parse one SSE line: strip "data: " prefix, return None for comments/blanks.
 fn parse_data_line(line :: Str) -> Option[Str]
   examples {

@@ -31,7 +31,9 @@ AgentDef
 | type | file | purpose |
 |---|---|---|
 | `AgentDef` | `src/agent.lex` | agent value — model, provider, tools, goal, options |
-| `Provider` | `src/provider.lex` | `chat :: (ModelRef, List[Message], List[Tool]) -> [net, llm] Iter[Delta]` |
+| `Provider` | `src/provider.lex` | `chat` (required, buffered) + `stream :: Option[StreamChat]` (optional, incremental) |
+| `StreamChat` | `src/provider.lex` | `open` `[net, llm]` → `Result[Stream[Str], Str]`, plus a pure `init` / `step` parser |
+| `Cursor` | `src/streaming.lex` | a partly-consumed stream: parser state + end-of-stream flag |
 | `Tool` | `src/tool.lex` | `execute :: (Json) -> [net, io, proc] Result[Json, Errors]` |
 | `Delta` | `src/delta.lex` | streaming event: `TextChunk`, `ToolCallBegin`, `ToolArgChunk`, `FinishDelta` |
 | `Step` | `src/delta.lex` | agent step: `StepDelta`, `StepToolExec`, `StepToolResult`, `StepDone` |
@@ -48,6 +50,22 @@ AgentDef
 | `lex-llm/providers/google` | `make_provider(config)` | Google Gemini generateContent |
 | `lex-llm/providers/ollama` | `make_provider(config)` | Ollama local inference |
 
+`stream` is implemented for `openai` (and therefore Mistral, LiteLLM, vLLM,
+lex-moe, MLX, opencode-go), `anthropic` and `ollama`; `google` and `vertex`
+declare `None` because Gemini answers with a JSON array rather than SSE.
+
+**Adding a streaming half to an adapter.** Three parts, split on the effect
+line: `open` does the request with `http.stream_lines` and returns the raw
+lines; `init` and `step` are pure, and `step` takes one line and the state
+so far and returns the next state and any `Delta`s. The state is `jv.Json`
+because the record field's type is fixed across every adapter. Do not put
+the pull loop in the adapter — it belongs to the caller, which is what lets
+a TUI paint between lines.
+
+Test a new `step` with `streaming.replay(sc, lines)`: it folds `step` over
+recorded lines with no network and no `[stream]` grant, so an adapter's
+parser is testable from a captured response. See `tests/test_streaming.lex`.
+
 Convenience constructors: `prov.gpt4o()`, `prov.claude_sonnet()`,
 `prov.gemini_flash()`, `prov.ollama("llama3")`.
 
@@ -57,7 +75,8 @@ Convenience constructors: `prov.gpt4o()`, `prov.claude_sonnet()`,
 
 | declared | why |
 |---|---|
-| `[net]` | `http.stream_lines` in every provider |
+| `[net]` | `http.send` (buffered) / `http.stream_lines` (streaming) in every provider |
+| `[stream]` | pulling a streamed response — `src/streaming.lex` and its callers only |
 | `[llm]` | semantic annotation — LLM-inference calls; lets policies gate separately |
 | `[io]`, `[proc]` | `Tool.execute` may do filesystem or shell I/O |
 
@@ -107,20 +126,23 @@ on validation failure. Returns `[net, llm] Result[Json, Errors]`.
 ## Running tests
 
 ```bash
-lex test           # runs tests/test_*.lex
+lex test --allow-effects io,time,crypto,random,sql,fs_read,fs_write,net,concurrent,llm,proc,approval,stream tests/
 ```
 
-Tests cover pure helpers (`sse`, `structured`). Effects-heavy paths
-(provider HTTP, agent loop) are covered by the example programs under
-`examples/` — run them against a local Ollama instance or with a live API key.
+Tests cover pure helpers (`sse`, `structured`) and the streaming parsers
+(`test_streaming.lex`, which replays recorded provider responses through
+each adapter's `step` — no network). Effects-heavy paths (provider HTTP,
+agent loop) are covered by the example programs under `examples/` — run them
+against a local Ollama instance or with a live API key.
 
 ---
 
 ## Known limitations
 
-- `http.stream_lines` (the SSE transport) buffers the full response body
-  before yielding lines. LLM provider APIs close the connection after all
-  events, so this works in practice. Generic persistent SSE feeds would
-  hang — see lex-lang docs for the ureq upgrade roadmap.
+- The agent loop is still buffered. `Provider.stream` makes one turn
+  incremental; `run_loop` returns `List[Step]` for the whole multi-turn loop
+  and does not use it. A caller wanting live tokens drives `streaming.pull`
+  itself.
+- `google` and `vertex` have no streaming half.
 - No built-in retry / back-off on transient HTTP errors; wrap
   `run_loop` in a `flow.retry` if needed.

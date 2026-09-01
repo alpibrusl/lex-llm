@@ -1,10 +1,20 @@
 # lex-llm — Anthropic Messages API adapter
 #
-# Implements Provider.chat against POST /v1/messages with stream:true.
+# Implements Provider.chat against POST /v1/messages with stream:true, and
+# the optional Provider.stream half against the same endpoint.
 # Anthropic's SSE format uses typed event: fields; we track block state
 # in a fold to route input_json_delta chunks to the right call_id.
 #
 # Supported: claude-opus-5, claude-sonnet-5, claude-haiku-4-5-*
+#
+# Transport note — this adapter used http.post between b579206 and this
+# commit, and http.post has no header parameter. That silently dropped
+# x-api-key and anthropic-version from every request, so `chat` could only
+# ever have come back 401; build_headers sat unreferenced as the evidence.
+# The swap was a workaround for http.stream_lines not shipping in 0.9.5
+# (lex-lang#487) and outlived its reason: stream_lines has been real since
+# #683. `chat` now uses http.send, which takes headers and leaves the
+# [net, llm] row alone; `stream` uses stream_lines.
 
 import "../message" as msg
 
@@ -30,6 +40,8 @@ import "std.iter" as iter
 
 import "std.map" as map
 
+import "std.int" as int
+
 fn default_base_url() -> Str {
   "https://api.anthropic.com/v1/messages"
 }
@@ -47,7 +59,22 @@ fn default_config(api_key :: Str) -> AnthropicConfig {
 fn make_provider(config :: AnthropicConfig) -> prov.Provider {
   { name: "anthropic", chat: fn (model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
     chat(config, model, messages, tools)
-  } }
+  }, stream: Some({ open: fn (model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Result[Stream[Str], Str] {
+    open_stream(config, model, messages, tools)
+  }, init: encode_state({ block_type: "", tool_id: "", tool_name: "" }), step: stream_step }) }
+}
+
+# Open the same POST as `chat`, but pull the SSE body line-by-line instead of
+# waiting for the socket to close.
+fn open_stream(config :: AnthropicConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Result[Stream[Str], Str] {
+  let _sm := split_system(messages)
+  let sys := match _sm {
+    (s, _) => s,
+  }
+  let user_msgs := match _sm {
+    (_, ms) => ms,
+  }
+  http.stream_lines(config.base_url, build_headers(config.api_key), build_request(model, sys, user_msgs, tools))
 }
 
 fn chat(config :: AnthropicConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
@@ -59,11 +86,16 @@ fn chat(config :: AnthropicConfig, model :: prov.ModelRef, messages :: List[msg.
     (_, ms) => ms,
   }
   let body := build_request(model, sys, user_msgs, tools)
-  match http.post(config.base_url, bytes.from_str(body), "application/json") {
+  let req := { method: "POST", url: config.base_url, headers: build_headers(config.api_key), body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }
+  match http.send(req) {
     Err(_) => iter.from_list(d.provider_error("request failed or timed out")),
-    Ok(r) => match bytes.to_str(r.body) {
-      Err(_) => iter.from_list(d.provider_error("response body was not valid UTF-8")),
-      Ok(s) => parse_stream(sse.data_payloads(iter.from_list(str.split(s, "\n")))),
+    Ok(r) => if r.status >= 400 {
+      iter.from_list(d.provider_error(str.concat("HTTP ", int.to_str(r.status))))
+    } else {
+      match bytes.to_str(r.body) {
+        Err(_) => iter.from_list(d.provider_error("response body was not valid UTF-8")),
+        Ok(s) => parse_stream(sse.data_payloads(iter.from_list(str.split(s, "\n")))),
+      }
     },
   }
 }
@@ -241,6 +273,62 @@ fn str_field(j :: jv.Json, key :: Str) -> Str {
   match jv.get_field(j, key) {
     Some(JStr(s)) => s,
     _ => "",
+  }
+}
+
+# ---- Streaming step ----------------------------------------------
+#
+# `parse_stream` above folds ParseState over a list of payloads that are
+# already in memory. `stream_step` is the same fold body applied one line at
+# a time, so the caller can act on a Delta before the next line arrives.
+# Both route through `handle_event`, so the two paths cannot drift in how
+# they read an event — only in when they see it.
+#
+# ParseState is carried across calls as Json because Provider.StreamChat
+# fixes the state type for every adapter; see the note in provider.lex.
+fn encode_state(st :: ParseState) -> jv.Json
+  examples {
+    encode_state({ block_type: "text", tool_id: "t1", tool_name: "read" }) => JObj([("block_type", JStr("text")), ("tool_id", JStr("t1")), ("tool_name", JStr("read"))])
+  }
+{
+  JObj([("block_type", JStr(st.block_type)), ("tool_id", JStr(st.tool_id)), ("tool_name", JStr(st.tool_name))])
+}
+
+fn decode_state(j :: jv.Json) -> ParseState
+  examples {
+    decode_state(JObj([("block_type", JStr("text")), ("tool_id", JStr("t1")), ("tool_name", JStr("read"))])) => { block_type: "text", tool_id: "t1", tool_name: "read" },
+    decode_state(JNull) => { block_type: "", tool_id: "", tool_name: "" }
+  }
+{
+  { block_type: str_field(j, "block_type"), tool_id: str_field(j, "tool_id"), tool_name: str_field(j, "tool_name") }
+}
+
+# One SSE line in, (next state, Deltas) out.
+#
+# Anthropic's stream interleaves `event:` lines with `data:` lines; only the
+# data lines carry the payload, and the event type is repeated inside it, so
+# the event lines are dropped rather than parsed. `[DONE]` is not part of
+# Anthropic's dialect but costs nothing to tolerate.
+fn stream_step(state :: jv.Json, line :: Str) -> (jv.Json, List[d.Delta])
+  examples {
+    stream_step(JNull, "event: content_block_delta") => (JNull, []),
+    stream_step(JNull, "") => (JNull, []),
+    stream_step(JNull, "data: [DONE]") => (JNull, []),
+    stream_step(JNull, "data: not json") => (JNull, [])
+  }
+{
+  match sse.parse_data_line(sse.strip_cr(line)) {
+    None => (state, []),
+    Some(payload) => if payload == "[DONE]" {
+      (state, [])
+    } else {
+      match jv.parse_into_errors(payload) {
+        Err(_) => (state, []),
+        Ok(j) => match handle_event(decode_state(state), j) {
+          (next_state, deltas) => (encode_state(next_state), deltas),
+        },
+      }
+    },
   }
 }
 

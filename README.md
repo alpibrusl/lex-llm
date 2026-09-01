@@ -106,6 +106,47 @@ Convenience model refs: `prov.gpt4o()`, `prov.claude_sonnet()`,
 
 ---
 
+## Streaming (optional)
+
+`Provider` has two halves. `chat` is required and buffers: the whole turn is
+in hand before the first `Delta` is observable. `stream` is optional —
+`None` is a complete adapter — and yields `Delta`s as they come off the
+socket.
+
+| adapter | `stream` |
+|---|---|
+| `openai` (and everything routed through it: Mistral, LiteLLM, vLLM, lex-moe, MLX, opencode-go) | ✅ |
+| `anthropic` | ✅ |
+| `ollama` | ✅ |
+| `google`, `vertex` | `None` — Gemini returns a JSON *array*, not SSE, so there is no line-at-a-time parse without `?alt=sse` |
+
+Nothing existing changes: a caller that only uses `chat` sees identical
+behaviour, and `streaming.collect_via` falls back to `chat` for an adapter
+that declares `None`.
+
+To paint tokens as they arrive, drive the cursor yourself — one pull, print
+what it produced, pull again:
+
+```lex
+fn paint(sc :: prov.StreamChat, s :: Stream[Str], cur :: streaming.Cursor) -> [io, stream] Unit {
+  match streaming.pull(sc, s, cur) {
+    (next, deltas) => {
+      let _e := emit(deltas)
+      if streaming.is_done(next) { () } else { paint(sc, s, next) }
+    },
+  }
+}
+```
+
+`examples/streaming_tokens.lex` is that loop as a runnable program.
+
+Or, for the whole turn without a per-token loop,
+`streaming.collect_via(provider, model, messages, tools)`.
+
+Consuming a stream carries `[stream]` — add it to `--allow-effects`.
+
+---
+
 ## Tools
 
 ```lex
@@ -201,7 +242,8 @@ One attempt + one automatic retry on validation failure.
 
 | Effect | Why |
 |---|---|
-| `[net]` | HTTP calls via `http.stream_lines` |
+| `[net]` | HTTP calls — `http.send` on the buffered path, `http.stream_lines` on the streaming one |
+| `[stream]` | Pulling a streamed response line-by-line — only for callers of `src/streaming.lex` |
 | `[llm]` | Semantic annotation for LLM-inference; enables independent policy gating |
 | `[io]`, `[proc]` | Available to tools that need filesystem or shell access |
 | `[approval]` | Human decision points — dispatch blocks on `std.approval.request` for approval-scoped tools |
@@ -231,18 +273,19 @@ lex run --allow-effects net,llm examples/structured_output.lex main '"sk-ant-...
 ## Tests
 
 ```bash
-lex test   # runs tests/test_sse.lex and tests/test_structured.lex
+lex test --allow-effects io,time,crypto,random,sql,fs_read,fs_write,net,concurrent,llm,proc,approval,stream tests/
 ```
 
 ---
 
 ## Known limitations
 
-- **Eager HTTP buffering** — `http.stream_lines` reads the full response
-  body before splitting into lines. LLM provider APIs close the connection
-  after all events, so this works correctly. Persistent SSE feeds that never
-  close would hang. True per-line streaming requires a future ureq upgrade
-  in lex-lang.
+- **The agent loop is still buffered.** `Provider.stream` makes one turn's
+  `Delta`s arrive incrementally, and that is what a UI needs. `ag.run_loop`
+  does not use it: it returns `List[Step]` for the whole multi-turn loop, so
+  a caller wanting live tokens drives `streaming.pull` directly rather than
+  going through `run_loop`.
+- **`google` and `vertex` do not stream** — see the table above.
 - **No built-in retry** — wrap `run_loop` in `flow.retry` for transient
   HTTP error handling.
 

@@ -42,7 +42,21 @@ fn gemini_url(model :: Str, api_key :: Str) -> Str {
 fn make_provider(config :: GoogleConfig) -> prov.Provider {
   { name: "google", chat: fn (model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
     chat(config, model, messages, tools)
-  } }
+  }, stream: None }
+}
+
+# stream: None — Gemini's streamGenerateContent returns a JSON *array* of
+# response objects by default, not SSE: the framing is `[`, `,` and `]`
+# across line boundaries, so a line-at-a-time parser has nothing stable to
+# key on. The endpoint does take `?alt=sse` to switch dialects, which is the
+# way in when someone wants this; until then None is the honest answer and
+# callers fall back to the buffered `chat`.
+fn streaming_supported() -> Bool
+  examples {
+    streaming_supported() => false
+  }
+{
+  false
 }
 
 fn chat(config :: GoogleConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
