@@ -505,8 +505,7 @@ fn dispatch_one_traced(tools :: List[t.Tool], call :: CollectedCall, log :: trai
     let _verified := match verified_kind_for_tool(call.name, disp.content) {
       None => (),
       Some(vkind) => {
-        let vpayload := str.join(["{\"tool\":\"", call.name, "\",\"result\":\"pass\"}"], "")
-        let _ve := trail.append(log, vkind, inv_id, vpayload)
+        let _ve := trail.append(log, vkind, inv_id, verified_json(call.name, call.args_raw))
         ()
       },
     }
@@ -565,6 +564,53 @@ fn cap_failed_json(name :: Str, error :: Str) -> Str
 
 # Return the verified.* kind to emit when a tool call passes verification,
 # or None if the tool does not produce a verifiable attestation.
+# What a verification pass was ABOUT, not just that one happened.
+#
+# The payload used to carry only the tool name, so a downstream reader
+# could say "a type check passed somewhere in this project" and no more —
+# lex-code's attestation_query, its .lex/verified.jsonl records and its
+# task-spec criteria are all shaped around that limitation, and #32 is
+# still open because of it.
+#
+# The arguments were available the whole time. `call.args_raw` is used two
+# lines above this, to build the cap.invoked payload; the verified event
+# simply never looked at it. Reading the target out of it costs one field.
+#
+# `target` is empty when the tool was called with no path — `lex_check`
+# defaults to the whole project — and an empty target is honest: the pass
+# covers everything and names nothing.
+fn verified_json(tool_name :: Str, args_raw :: Str) -> Str
+  examples {
+    verified_json("lex_check", "{\"path\":\"src/a.lex\"}") => "{\"tool\":\"lex_check\",\"target\":\"src/a.lex\",\"result\":\"pass\"}",
+    verified_json("lex_check", "{}") => "{\"tool\":\"lex_check\",\"target\":\"\",\"result\":\"pass\"}",
+    verified_json("lex_test", "not json") => "{\"tool\":\"lex_test\",\"target\":\"\",\"result\":\"pass\"}"
+  }
+{
+  jv.stringify(JObj([("tool", JStr(tool_name)), ("target", JStr(target_of(args_raw))), ("result", JStr("pass"))]))
+}
+
+# Every verification tool that produces a verified.* event takes its
+# subject as `path` — lex_check, lex_spec_check and lex_test all do. A
+# tool that does not is not one of them, and gets an empty target rather
+# than a guess.
+fn target_of(args_raw :: Str) -> Str
+  examples {
+    target_of("{\"path\":\"src/a.lex\"}") => "src/a.lex",
+    target_of("{\"path\":\"src/a.lex\",\"count\":10}") => "src/a.lex",
+    target_of("{\"count\":10}") => "",
+    target_of("{}") => "",
+    target_of("") => ""
+  }
+{
+  match jv.parse_into_errors(args_raw) {
+    Err(_) => "",
+    Ok(j) => match jv.get_field(j, "path") {
+      Some(JStr(p)) => p,
+      _ => "",
+    },
+  }
+}
+
 # Content is the stringified JStr result from the tool, so success phrases
 # appear inside the JSON string literal.
 fn verified_kind_for_tool(tool_name :: Str, content :: Str) -> Option[Str] {
