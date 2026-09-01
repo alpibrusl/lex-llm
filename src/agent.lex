@@ -20,6 +20,9 @@
 #   7. Otherwise emit StepDone.
 #
 # run_loop_traced: same loop with lex-trail events at each step.
+# run_steps_streamed: same loop as run_loop_traced, but emitting each Step
+#   through a caller-supplied callback the moment it happens rather than
+#   returning them all at the end. See the note above it.
 # with_permission_gate: construction-time filter + store spec for runtime check.
 # make_agent: canonical constructor; sets permission_spec: None.
 
@@ -28,6 +31,8 @@ import "./message" as msg
 import "./delta" as d
 
 import "./tool" as t
+
+import "./streaming" as streaming
 
 import "./provider" as prov
 
@@ -152,6 +157,140 @@ fn run_steps(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int) -> [n
       _ => list.concat(delta_steps, [StepDone(AssistantMsg(response.content, []))]),
     }
   }
+}
+
+# Run the loop, emitting each Step as it happens.
+#
+# `run_steps_traced` computes the whole multi-turn loop and hands back a
+# List[Step], so a caller that walks that list is walking history: every
+# token of a two-minute turn arrives at once, two minutes in. That is the
+# right shape for a batch caller and the wrong one for anything a person is
+# watching.
+#
+# This is the same loop with one difference: `on_step` fires the moment a
+# Step exists — each Delta as it comes off the socket, each tool execution
+# as it is dispatched, the final message as it is assembled. The returned
+# List[Step] is unchanged, so a caller that wants both the live view and the
+# transcript gets them from one call.
+#
+# **A caller must not also walk the returned list with `on_step`** — every
+# Step has already been emitted, and doing both prints the turn twice.
+#
+# Where the provider declares no streaming half, this still works: the
+# buffered `chat` runs, and its Deltas are emitted through the same callback
+# in one burst. The callback contract does not change, only the timing, so a
+# caller never branches on whether its provider streams.
+#
+# `on_step` is a plain function parameter rather than a record field, which
+# is what lets it carry an effect row at all here. The row is fixed at [io]:
+# a printer, a logger, a no-op. A callback that wants to do more than write —
+# time each Step, say, or persist it — cannot, and has to work from the
+# returned list instead. Widening the row would push that effect onto every
+# caller of this function, which is the cost the narrow row is avoiding.
+fn run_steps_streamed(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int, log :: trail.Log, parent :: Option[Str], on_step :: (d.Step) -> [io] Unit) -> [net, llm, io, proc, sql, time, approval, stream] List[d.Step] {
+  if budget == 0 {
+    let done := StepDone(AssistantMsg("[max_steps reached]", []))
+    let __e := on_step(done)
+    [done]
+  } else {
+    let messages := list.concat([SystemMsg(agent.goal)], conv)
+    let bindings := bindings_from_conv(conv)
+    let avail_tools := t.filter_available(agent.tools, bindings)
+    let raw_deltas := deltas_streamed(agent, messages, avail_tools, on_step)
+    let delta_steps := list.map(raw_deltas, fn (dl :: d.Delta) -> d.Step {
+      StepDelta(dl)
+    })
+    let response := collect_response(raw_deltas)
+    let step_payload := llm_step_json(agent.model, list.len(response.tool_calls))
+    let step_evt := trail.append(log, kinds.llm_step(), parent, step_payload)
+    let step_id := match step_evt {
+      Ok(evt) => Some(evt.id),
+      Err(_) => parent,
+    }
+    match response.finish_reason {
+      "tool_calls" => {
+        let dispatches := dispatch_calls_traced(agent.tools, response.tool_calls, log, step_id, agent.permission_spec)
+        let exec_steps := dispatches_to_steps(dispatches)
+        let __x := emit_steps(exec_steps, on_step)
+        let tool_messages := dispatches_to_messages(dispatches)
+        let assistant_msg := AssistantMsg(response.content, list.map(response.tool_calls, fn (c :: CollectedCall) -> msg.ToolCall {
+          { id: c.id, name: c.name, args: parse_args_or_empty(c.args_raw) }
+        }))
+        let base_conv := list.concat(conv, list.concat([assistant_msg], tool_messages))
+        let new_conv := if any_dispatch_failed(dispatches) {
+          list.concat(base_conv, [UserMsg("One or more tools returned errors. Read the error messages above, fix the code, and try again.")])
+        } else {
+          base_conv
+        }
+        list.concat(delta_steps, list.concat(exec_steps, run_steps_streamed(agent, new_conv, budget - 1, log, step_id, on_step)))
+      },
+      _ => {
+        let done := StepDone(AssistantMsg(response.content, []))
+        let __d := on_step(done)
+        list.concat(delta_steps, [done])
+      },
+    }
+  }
+}
+
+# One turn's Deltas, emitted as they arrive when the provider can, in one
+# burst when it cannot.
+#
+# The `None` branch is not a degraded path to apologise for: it is the
+# buffered behaviour every caller had before, reached through the same
+# callback, so a provider without a streaming half needs no handling at the
+# call site.
+fn deltas_streamed(agent :: AgentLoop, messages :: List[msg.Message], tools :: List[t.Tool], on_step :: (d.Step) -> [io] Unit) -> [net, llm, io, stream] List[d.Delta] {
+  match agent.provider.stream {
+    None => {
+      let ds := iter.to_list(agent.provider.chat(agent.model, messages, tools))
+      let __e := emit_deltas(ds, on_step)
+      ds
+    },
+    Some(sc) => match sc.open(agent.model, messages, tools) {
+      Err(e) => {
+        let ds := d.provider_error(e)
+        let __e := emit_deltas(ds, on_step)
+        ds
+      },
+      Ok(s) => pump_deltas(sc, s, streaming.start(sc), [], on_step, streaming.line_budget()),
+    },
+  }
+}
+
+# Pull one line, emit whatever Deltas it produced, pull again.
+#
+# Bounded by `budget` for the same reason streaming.drain is: a provider that
+# stops sending without closing the socket would otherwise park the turn for
+# the transport's full idle timeout.
+fn pump_deltas(sc :: prov.StreamChat, s :: Stream[Str], cur :: streaming.Cursor, acc :: List[d.Delta], on_step :: (d.Step) -> [io] Unit, budget :: Int) -> [io, stream] List[d.Delta] {
+  if budget == 0 {
+    acc
+  } else {
+    match streaming.pull(sc, s, cur) {
+      (next_cur, deltas) => {
+        let __e := emit_deltas(deltas, on_step)
+        let so_far := list.concat(acc, deltas)
+        if streaming.is_done(next_cur) {
+          so_far
+        } else {
+          pump_deltas(sc, s, next_cur, so_far, on_step, budget - 1)
+        }
+      },
+    }
+  }
+}
+
+fn emit_deltas(deltas :: List[d.Delta], on_step :: (d.Step) -> [io] Unit) -> [io] Unit {
+  list.fold(deltas, (), fn (_acc :: Unit, dl :: d.Delta) -> [io] Unit {
+    on_step(StepDelta(dl))
+  })
+}
+
+fn emit_steps(steps :: List[d.Step], on_step :: (d.Step) -> [io] Unit) -> [io] Unit {
+  list.fold(steps, (), fn (_acc :: Unit, st :: d.Step) -> [io] Unit {
+    on_step(st)
+  })
 }
 
 fn any_dispatch_failed(dispatches :: List[Dispatch]) -> Bool {

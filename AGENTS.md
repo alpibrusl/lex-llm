@@ -34,6 +34,15 @@ AgentDef
 | `Provider` | `src/provider.lex` | `chat` (required, buffered) + `stream :: Option[StreamChat]` (optional, incremental) |
 | `StreamChat` | `src/provider.lex` | `open` `[net, llm]` → `Result[Stream[Str], Str]`, plus a pure `init` / `step` parser |
 | `Cursor` | `src/streaming.lex` | a partly-consumed stream: parser state + end-of-stream flag |
+
+Three entry points to the loop, differing only in when the caller learns
+things: `run_loop` (buffered, untraced), `run_loop_traced` (buffered, with
+trail events), `run_steps_streamed` (trail events, and `on_step` fires the
+moment each Step exists). The streamed one returns the same `List[Step]` the
+others do — **do not also walk that list with `on_step`**, or the turn prints
+twice. It works with a `stream: None` provider too: the Deltas arrive in one
+burst through the same callback, so a caller never branches on whether its
+provider streams.
 | `Tool` | `src/tool.lex` | `execute :: (Json) -> [net, io, proc] Result[Json, Errors]` |
 | `Delta` | `src/delta.lex` | streaming event: `TextChunk`, `ToolCallBegin`, `ToolArgChunk`, `FinishDelta` |
 | `Step` | `src/delta.lex` | agent step: `StepDelta`, `StepToolExec`, `StepToolResult`, `StepDone` |
@@ -139,10 +148,11 @@ against a local Ollama instance or with a live API key.
 
 ## Known limitations
 
-- The agent loop is still buffered. `Provider.stream` makes one turn
-  incremental; `run_loop` returns `List[Step]` for the whole multi-turn loop
-  and does not use it. A caller wanting live tokens drives `streaming.pull`
-  itself.
+- `run_loop` / `run_loop_traced` are still buffered — they return
+  `List[Step]` for the whole multi-turn loop. `run_steps_streamed` is the
+  live variant: same loop, but `on_step` fires as each Step happens. Its
+  callback row is fixed at `[io]`, so a callback can print or log but not
+  time or persist; that work goes on the returned list.
 - `google` and `vertex` have no streaming half.
 - No built-in retry / back-off on transient HTTP errors; wrap
   `run_loop` in a `flow.retry` if needed.
