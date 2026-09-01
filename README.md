@@ -143,6 +143,19 @@ fn paint(sc :: prov.StreamChat, s :: Stream[Str], cur :: streaming.Cursor) -> [i
 Or, for the whole turn without a per-token loop,
 `streaming.collect_via(provider, model, messages, tools)`.
 
+For the **agent loop** rather than one provider call, `ag.run_steps_streamed`
+is `run_loop_traced` with a callback that fires as each Step happens:
+
+```lex
+let steps := ag.run_steps_streamed(agent, conv, budget, log, parent, fn (st :: d.Step) -> [io] Unit {
+  io.print(render(st))
+})
+```
+
+It returns the same `List[Step]` — don't walk it with the callback as well,
+or the turn prints twice — and falls back to buffered `chat` for a provider
+that declares `None`, emitting through the same callback.
+
 Consuming a stream carries `[stream]` — add it to `--allow-effects`.
 
 ---
