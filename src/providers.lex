@@ -94,8 +94,48 @@ fn google_with_key(api_key :: Str) -> prov.Provider {
   goog.make_provider(goog.default_config(api_key))
 }
 
-fn ollama_local() -> prov.Provider {
-  olla.make_provider(olla.default_config())
+# Every other local provider here reads its endpoint from the environment
+# — LITELLM_BASE_URL, VLLM_BASE_URL — and this one did not, so an Ollama
+# anywhere but localhost:11434 was simply unreachable: `ollama_at` existed
+# but nothing on the `ollama` provider tag called it.
+#
+# OLLAMA_BASE_URL is the name lex-loom's LiteLLM config already uses for
+# the same host, so one variable points both at the same daemon.
+fn ollama_default_url() -> Str
+  examples {
+    ollama_default_url() => "http://localhost:11434"
+  }
+{
+  "http://localhost:11434"
+}
+
+# A trailing slash would make `ollama_at` build `.../api/chat` off
+# `host//api/chat`. Cheap to tolerate, confusing to debug.
+fn normalize_host(raw :: Str) -> Str
+  examples {
+    normalize_host("http://box:11434") => "http://box:11434",
+    normalize_host("http://box:11434/") => "http://box:11434",
+    normalize_host("  http://box:11434/  ") => "http://box:11434",
+    normalize_host("") => "http://localhost:11434",
+    normalize_host("   ") => "http://localhost:11434"
+  }
+{
+  let t := str.trim(raw)
+  if str.is_empty(t) {
+    ollama_default_url()
+  } else {
+    match str.strip_suffix(t, "/") {
+      None => t,
+      Some(without) => without,
+    }
+  }
+}
+
+fn ollama_local() -> [env] prov.Provider {
+  ollama_at(normalize_host(match env.get("OLLAMA_BASE_URL") {
+    None => "",
+    Some(u) => u,
+  }))
 }
 
 fn ollama_model() -> [env] Str {
