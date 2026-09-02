@@ -453,6 +453,36 @@ fn dispatch_calls_traced(tools :: List[t.Tool], calls :: List[CollectedCall], lo
   })
 }
 
+# What the model actually reads when a tool succeeds.
+#
+# This was `jv.stringify(out)` unconditionally. Almost every tool returns
+# its answer as `JStr(text)` — read, grep, glob, bash, lex_check, the whole
+# vcs family — and stringifying a JSON string RE-ENCODES it: the model was
+# handed `"import \"lex-schema/json_value\" as jv\n\nimport ..."`, quotes
+# and all, with every newline as a literal backslash-n.
+#
+# A frontier model reads through that. A 7B local model, which is exactly
+# what the Ollama path exists to serve, reads it much worse — and pays for
+# the escaping twice, in a context window it can least afford: the escaped
+# form of a source file is materially longer than the file.
+#
+# A tool that genuinely returns structured JSON still gets stringified;
+# only the string case is unwrapped, because for it the encoding was never
+# carrying information in the first place.
+fn tool_result_text(out :: jv.Json) -> Str
+  examples {
+    tool_result_text(JStr("fn f() -> Int {\n  1\n}")) => "fn f() -> Int {\n  1\n}",
+    tool_result_text(JStr("")) => "",
+    tool_result_text(JObj([("ok", JBool(true))])) => "{\"ok\":true}",
+    tool_result_text(JList([JInt(1), JInt(2)])) => "[1,2]"
+  }
+{
+  match out {
+    JStr(text) => text,
+    _ => jv.stringify(out),
+  }
+}
+
 fn dispatch_one(tools :: List[t.Tool], call :: CollectedCall, spec_opt :: Option[sp.Spec]) -> [net, io, proc, approval] Dispatch {
   let is_allowed := match spec_opt {
     None => true,
@@ -466,7 +496,7 @@ fn dispatch_one(tools :: List[t.Tool], call :: CollectedCall, spec_opt :: Option
     match t.find_by_name(tools, call.name) {
       None => { call: call, success: false, content: str.concat("{\"error\":\"unknown tool: ", str.concat(call.name, "}")) },
       Some(tool) => match t.exec_with_approval(tool, args) {
-        Ok(out) => { call: call, success: true, content: jv.stringify(out) },
+        Ok(out) => { call: call, success: true, content: tool_result_text(out) },
         Err(errs) => { call: call, success: false, content: str.concat("{\"error\":\"", str.concat(t.format_validation_error(errs), "}")) },
       },
     }
