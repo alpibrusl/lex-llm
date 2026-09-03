@@ -114,6 +114,75 @@ type CollectedCall = { id :: Str, name :: Str, args_raw :: Str }
 # body can be built in one pass without re-executing.
 type Dispatch = { call :: CollectedCall, success :: Bool, content :: Str }
 
+# ---- Wrap-up nudge for verification-driven modes (lex-code#97) ---
+#
+# spec/test agents often finish the actual work in the first few turns —
+# write the spec/test, run the tool that verifies it, done — but then keep
+# calling tools anyway, burning the full step budget even when nothing is
+# left to do. A static system-prompt instruction to "stop once verification
+# passes" did not change this: it's diluted among everything else the
+# system prompt says, and by the time it matters (right after a successful
+# check) it is far from the model's attention.
+#
+# This nudges instead of relying on prompt compliance alone: the moment a
+# verification tool call succeeds for a mode named in wraps_up_on_verification,
+# the very next message appended to the conversation is a fresh, specific
+# instruction to wrap up now — as close to the model's next decision point
+# as a message can be. Injected at most once per conversation
+# (already_nudged), not on every subsequent turn, so a model that genuinely
+# has more work left isn't nagged into stopping early.
+fn is_verification_tool(name :: Str) -> Bool {
+  name == "lex_check" or name == "lex_spec_check" or name == "lex_test"
+}
+
+# Scoped to spec/test only — review already terminates on its own (its
+# system prompt gives it a concrete final-report shape to converge on), and
+# build/plan/explore/refactor/bar legitimately keep working after a
+# lex_check pass, so nudging them to stop early would be a regression, not
+# a fix.
+fn wraps_up_on_verification(agent_name :: Str) -> Bool {
+  agent_name == "spec" or agent_name == "test"
+}
+
+fn had_successful_verification(dispatches :: List[Dispatch]) -> Bool {
+  list.fold(dispatches, false, fn (acc :: Bool, disp :: Dispatch) -> Bool {
+    if acc {
+      true
+    } else {
+      disp.success and is_verification_tool(disp.call.name)
+    }
+  })
+}
+
+fn wrapup_nudge_text() -> Str {
+  "Verification just passed. If the task described in your instructions is complete, respond now with your final plain-text report and call no more tools. Only make another tool call if there is genuinely more work the task still requires."
+}
+
+fn already_nudged(conv :: List[msg.Message]) -> Bool {
+  let needle := wrapup_nudge_text()
+  list.fold(conv, false, fn (acc :: Bool, m :: msg.Message) -> Bool {
+    if acc {
+      true
+    } else {
+      match m {
+        UserMsg(text) => text == needle,
+        _ => false,
+      }
+    }
+  })
+}
+
+# Called where a turn's dispatches all succeeded, in place of `base_conv`:
+# appends the wrap-up nudge when this turn's tool calls just verified
+# spec/test work, unless we've already nudged once this conversation.
+fn maybe_nudge_wrapup(agent :: AgentLoop, dispatches :: List[Dispatch], conv :: List[msg.Message], base_conv :: List[msg.Message]) -> List[msg.Message] {
+  if wraps_up_on_verification(agent.name) and had_successful_verification(dispatches) and not already_nudged(conv) {
+    list.concat(base_conv, [UserMsg(wrapup_nudge_text())])
+  } else {
+    base_conv
+  }
+}
+
 # ---- Public entry points -----------------------------------------
 fn run_loop(agent :: AgentLoop, conversation :: List[msg.Message]) -> [net, llm, io, proc, approval] Iter[d.Step] {
   let budget := unwrap_int(agent.options.max_steps, 20)
@@ -150,7 +219,7 @@ fn run_steps(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int) -> [n
         let new_conv := if any_dispatch_failed(dispatches) {
           list.concat(base_conv, [UserMsg("One or more tools returned errors. Read the error messages above, fix the code, and try again.")])
         } else {
-          base_conv
+          maybe_nudge_wrapup(agent, dispatches, conv, base_conv)
         }
         list.concat(delta_steps, list.concat(exec_steps, run_steps(agent, new_conv, budget - 1)))
       },
@@ -220,7 +289,7 @@ fn run_steps_streamed(agent :: AgentLoop, conv :: List[msg.Message], budget :: I
         let new_conv := if any_dispatch_failed(dispatches) {
           list.concat(base_conv, [UserMsg("One or more tools returned errors. Read the error messages above, fix the code, and try again.")])
         } else {
-          base_conv
+          maybe_nudge_wrapup(agent, dispatches, conv, base_conv)
         }
         list.concat(delta_steps, list.concat(exec_steps, run_steps_streamed(agent, new_conv, budget - 1, log, step_id, on_step)))
       },
@@ -337,7 +406,7 @@ fn run_steps_traced(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int
         let new_conv := if any_dispatch_failed(dispatches) {
           list.concat(base_conv, [UserMsg("One or more tools returned errors. Read the error messages above, fix the code, and try again.")])
         } else {
-          base_conv
+          maybe_nudge_wrapup(agent, dispatches, conv, base_conv)
         }
         list.concat(delta_steps, list.concat(exec_steps, run_steps_traced(agent, new_conv, budget - 1, log, step_id)))
       },
