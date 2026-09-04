@@ -16,6 +16,7 @@ fn delta_tag(dl :: d.Delta) -> Str {
     ToolCallBegin(i, n) => str.concat("TCBegin:", n),
     ToolArgChunk(i, _) => str.concat("TCArgs:", i),
     FinishDelta(r) => str.concat("Finish:", r),
+    UsageDelta(p, c, tt) => str.join(["Usage:", int.to_str(p), ",", int.to_str(c), ",", int.to_str(tt)], ""),
   }
 }
 
