@@ -256,9 +256,20 @@ fn run_steps(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int) -> [n
 # time each Step, say, or persist it — cannot, and has to work from the
 # returned list instead. Widening the row would push that effect onto every
 # caller of this function, which is the cost the narrow row is avoiding.
+# A normal turn's answer reaches a live caller as TextChunk deltas WHILE
+# the provider streams it, so a caller like lex-code's tui/main.lex
+# deliberately prints nothing more when StepDone arrives — the text is
+# already on screen, and printing it again would duplicate it. Hitting
+# the budget never streams anything at all (there is no provider call
+# this turn), so without a preceding TextChunk here that caller's
+# assumption makes this message invisible: the run just stops, silently,
+# with no explanation. Emitting it as a TextChunk first, the same shape a
+# normal answer takes, needs no caller-side special case.
 fn run_steps_streamed(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int, log :: trail.Log, parent :: Option[Str], on_step :: (d.Step) -> [io] Unit) -> [net, llm, io, proc, sql, time, approval, stream] List[d.Step] {
   if budget == 0 {
-    let done := StepDone(AssistantMsg("[max_steps reached]", []))
+    let text := "[max_steps reached]"
+    let done := StepDone(AssistantMsg(text, []))
+    let __text := on_step(StepDelta(TextChunk(text)))
     let __e := on_step(done)
     [done]
   } else {

@@ -158,14 +158,20 @@ fn test_none_provider_still_emits() -> [net, llm, io, proc, sql, time, approval,
   }
 }
 
-# An exhausted budget is still an emission, not a silent empty turn.
+# An exhausted budget is still an emission, not a silent empty turn — and
+# specifically a Text emission before the Done, not just the Done alone: a
+# live caller that (like lex-code's tui/main.lex) deliberately prints
+# nothing for a bare Done, on the assumption its text already reached the
+# screen as Text deltas while the provider streamed, would otherwise never
+# show this message at all. Budget exhaustion never streams anything —
+# there is no provider call this turn — so it has to arrive as Text too.
 fn test_budget_exhausted_emits() -> [net, llm, io, proc, sql, time, approval, stream, fs_write] Result[Unit, Str] {
   match log.open_memory() {
     Err(e) => Err(str.concat("log.open_memory failed: ", e)),
     Ok(lg) => {
       let __r := reset_trace()
       let __s := ag.run_steps_streamed(stub_agent([TextChunk("x"), FinishDelta("stop")]), [UserMsg("hi")], 0, lg, None, on_step)
-      expect("budget exhausted", read_trace(), "Done([max_steps reached])")
+      expect("budget exhausted", read_trace(), "Text([max_steps reached])Done([max_steps reached])")
     },
   }
 }
