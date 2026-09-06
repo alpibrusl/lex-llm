@@ -221,6 +221,20 @@ fn mlx_at(host :: Str) -> prov.Provider {
 # Run LiteLLM with: docker run -p 4000:4000 ghcr.io/berriai/litellm --config config.yaml
 # Set LITELLM_BASE_URL to override the default localhost:4000 endpoint.
 # Set LITELLM_API_KEY if your LiteLLM deployment requires a master key.
+#
+# `stream: None`, not oai.make_provider's default `Some(...)` — isolated
+# live, with the exact same request replayed through curl with only
+# `stream` flipped: LiteLLM's translation of an Ollama-backed model's tool
+# call is correct when `stream: false` (a proper `finish_reason:
+# "tool_calls"` with a structured `tool_calls` array) and broken when
+# `stream: true` (the same tool call serialized as plain `delta.content`
+# text, one token at a time, ending in `finish_reason: "stop"` — never
+# recognized as a tool call at all). `run_steps_streamed`'s own contract
+# already covers a provider with no streaming half: the buffered `chat`
+# runs and its Deltas reach `on_step` in one burst instead of live, token
+# by token. That is the right trade here — losing live streaming costs
+# nothing functional, and shipping every request through the path that
+# actually works costs nothing either.
 fn litellm() -> [env] prov.Provider {
   let base := match env.get("LITELLM_BASE_URL") {
     None => "http://localhost:4000",
@@ -239,7 +253,7 @@ fn litellm() -> [env] prov.Provider {
     None => "",
     Some(k) => k,
   }
-  oai.make_provider({ api_key: api_key, base_url: url })
+  no_stream(oai.make_provider({ api_key: api_key, base_url: url }))
 }
 
 fn litellm_at(base_url :: Str) -> prov.Provider {
@@ -248,7 +262,12 @@ fn litellm_at(base_url :: Str) -> prov.Provider {
   } else {
     str.concat(base_url, "/v1/chat/completions")
   }
-  oai.make_provider({ api_key: "", base_url: url })
+  no_stream(oai.make_provider({ api_key: "", base_url: url }))
+}
+
+# Same provider, streaming half removed — see litellm()'s own comment for why.
+fn no_stream(p :: prov.Provider) -> prov.Provider {
+  { name: p.name, chat: p.chat, stream: None }
 }
 
 # ── Vertex AI (Gemini via Google Cloud multi-region endpoint) ─────────────────
