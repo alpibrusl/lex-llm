@@ -143,11 +143,29 @@ fn normalize_host(raw :: Str) -> Str
   }
 }
 
+# OLLAMA_THINK controls the request's `think` field (see ollama.lex's
+# OllamaConfig comment): unset leaves it out entirely (whatever the model's
+# own default is — Qwen3's family ships thinking ON by default, which is
+# what made a 27B "thinking" model burn 40+ minutes reasoning before its
+# first tool call on a real lex-code run before this existed). Set to
+# "false" to disable it outright, or "low"/"medium"/"high"/"max" for a
+# graded effort level on models that support one.
+fn ollama_think() -> [env] Option[Str] {
+  match env.get("OLLAMA_THINK") {
+    None => None,
+    Some(t) => if str.is_empty(t) {
+      None
+    } else {
+      Some(t)
+    },
+  }
+}
+
 fn ollama_local() -> [env] prov.Provider {
-  ollama_at(normalize_host(match env.get("OLLAMA_BASE_URL") {
+  ollama_at_think(normalize_host(match env.get("OLLAMA_BASE_URL") {
     None => "",
     Some(u) => u,
-  }))
+  }), ollama_think())
 }
 
 fn ollama_model() -> [env] Str {
@@ -157,8 +175,18 @@ fn ollama_model() -> [env] Str {
   }
 }
 
+# Kept at its original 1-arg shape — `select_provider`'s (name, url, key)
+# contract is shared across every consumer of this canonical selector
+# (lex-soft, lex-ev-fleet, …), so this always sends `think: None` (today's
+# behavior, unchanged). `ollama_local` (env-driven, used by lex-code's
+# `ollama_agent()`) is the one path that can actually set OLLAMA_THINK,
+# via ollama_at_think below.
 fn ollama_at(host :: Str) -> prov.Provider {
-  olla.make_provider({ base_url: str.concat(host, "/api/chat") })
+  olla.make_provider({ base_url: str.concat(host, "/api/chat"), think: None })
+}
+
+fn ollama_at_think(host :: Str, think :: Option[Str]) -> prov.Provider {
+  olla.make_provider({ base_url: str.concat(host, "/api/chat"), think: think })
 }
 
 # vLLM — OpenAI-compatible, no key required by default.

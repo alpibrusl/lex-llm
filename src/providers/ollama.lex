@@ -37,14 +37,22 @@ fn default_base_url() -> Str {
   "http://localhost:11434/api/chat"
 }
 
-type OllamaConfig = { base_url :: Str }
+# `think` mirrors Ollama's own `/api/chat` field: `None` omits it entirely
+# (today's behavior — whatever the model's own default is, which Qwen3's
+# family ships as thinking ON), `Some("true")`/`Some("false")` toggles it,
+# and `Some("low"|"medium"|"high"|"max")` requests a graded effort level on
+# models that support one (GPT-OSS requires a level; boolean is ignored).
+# Stored as a raw Str rather than a typed enum so a level Ollama adds later
+# doesn't need a new variant here — encode_think below is the only place
+# that has to agree with Ollama's own vocabulary.
+type OllamaConfig = { base_url :: Str, think :: Option[Str] }
 
 fn default_config() -> OllamaConfig
   examples {
-    default_config() => { base_url: "http://localhost:11434/api/chat" }
+    default_config() => { base_url: "http://localhost:11434/api/chat", think: None }
   }
 {
-  { base_url: default_base_url() }
+  { base_url: default_base_url(), think: None }
 }
 
 fn make_provider(config :: OllamaConfig) -> prov.Provider {
@@ -56,11 +64,11 @@ fn make_provider(config :: OllamaConfig) -> prov.Provider {
 }
 
 fn open_stream(config :: OllamaConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Result[Stream[Str], Str] {
-  http.stream_lines(config.base_url, map.set(map.new(), "content-type", "application/json"), build_stream_request(model, messages, tools))
+  http.stream_lines(config.base_url, map.set(map.new(), "content-type", "application/json"), build_stream_request(model, messages, tools, config.think))
 }
 
 fn chat(config :: OllamaConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
-  let body := build_request(model, messages, tools)
+  let body := build_request(model, messages, tools, config.think)
   let hdrs := map.set(map.set(map.new(), "content-type", "application/json"), "connection", "close")
   let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }
   match http.send(req) {
@@ -77,22 +85,47 @@ fn chat(config :: OllamaConfig, model :: prov.ModelRef, messages :: List[msg.Mes
 }
 
 # ---- Request building --------------------------------------------
-fn build_stream_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
-  build_body(model, messages, tools, true)
+fn build_stream_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool], think :: Option[Str]) -> Str {
+  build_body(model, messages, tools, true, think)
 }
 
-fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
-  build_body(model, messages, tools, false)
+fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool], think :: Option[Str]) -> Str {
+  build_body(model, messages, tools, false, think)
 }
 
-fn build_body(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool], streaming :: Bool) -> Str {
+# "true"/"false" become a real JSON boolean (what most thinking models
+# expect); anything else (a level like "low"/"max") is sent verbatim as a
+# string, since that is what a graded-effort model like GPT-OSS requires.
+fn think_json(think :: Str) -> jv.Json
+  examples {
+    think_json("true") => JBool(true),
+    think_json("false") => JBool(false),
+    think_json("low") => JStr("low")
+  }
+{
+  if think == "true" {
+    JBool(true)
+  } else {
+    if think == "false" {
+      JBool(false)
+    } else {
+      JStr(think)
+    }
+  }
+}
+
+fn build_body(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool], streaming :: Bool, think :: Option[Str]) -> Str {
   let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(streaming))]
   let with_tools := if list.is_empty(tools) {
     base
   } else {
     list.concat(base, [("tools", JList(list.map(tools, t.to_openai_json)))])
   }
-  jv.stringify(JObj(with_tools))
+  let with_think := match think {
+    None => with_tools,
+    Some(lvl) => list.concat(with_tools, [("think", think_json(lvl))]),
+  }
+  jv.stringify(JObj(with_think))
 }
 
 fn encode_message(m :: msg.Message) -> jv.Json {
