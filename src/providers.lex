@@ -14,6 +14,8 @@ import "std.str" as str
 
 import "std.list" as list
 
+import "std.crypto" as crypto
+
 import "./providers/anthropic" as anth
 
 import "./providers/openai" as oai
@@ -61,13 +63,23 @@ fn opencode_go() -> [env] prov.Provider {
 # OpenCode Go plan with an explicit key and optional base-url override.
 # Used by select_provider so the key can arrive via the agent request JSON
 # (provider_key) instead of the environment. Empty url → the Go endpoint.
+#
+# The Go endpoint 400s every request with no `x-opencode-session` header
+# ("Request is missing x-opencode-session and cannot be routed
+# efficiently") -- found live driving a real build through it. A stable
+# hash of the caller's own key is a pure, effect-free way to give it a
+# per-subscription session id without threading a new `random`/`time`
+# effect through every *_agent() constructor across all 8 agent files
+# that can select this provider; any non-empty string satisfies the
+# endpoint (confirmed against the real API), so there is nothing this
+# needs beyond "consistent per key."
 fn opencode_go_at(url :: Str, key :: Str) -> prov.Provider {
   let base := if str.is_empty(url) {
     "https://opencode.ai/zen/go/v1/chat/completions"
   } else {
     url
   }
-  oai.make_provider({ api_key: key, base_url: base })
+  oai.make_provider({ api_key: key, base_url: base, extra_header: Some(("x-opencode-session", crypto.sha256_str(key))) })
 }
 
 fn google() -> [env] prov.Provider {
@@ -164,11 +176,11 @@ fn vllm_local() -> [env] prov.Provider {
     None => "http://localhost:8000/v1/chat/completions",
     Some(u) => u,
   }
-  oai.make_provider({ api_key: "", base_url: base_url })
+  oai.make_provider({ api_key: "", base_url: base_url, extra_header: None })
 }
 
 fn vllm_at(host :: Str) -> prov.Provider {
-  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions") })
+  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions"), extra_header: None })
 }
 
 # ── lex-moe (self-hosted, streamed-from-NVMe MoE inference) ──────────────────
@@ -193,11 +205,11 @@ fn moe_local() -> [env] prov.Provider {
     None => "http://127.0.0.1:8080/v1/chat/completions",
     Some(u) => u,
   }
-  oai.make_provider({ api_key: "", base_url: base_url })
+  oai.make_provider({ api_key: "", base_url: base_url, extra_header: None })
 }
 
 fn moe_at(host :: Str) -> prov.Provider {
-  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions") })
+  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions"), extra_header: None })
 }
 
 # ── MLX (Apple Silicon) ───────────────────────────────────────────────────────
@@ -214,7 +226,7 @@ fn mlx_model() -> [env] Str {
 }
 
 fn mlx_at(host :: Str) -> prov.Provider {
-  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions") })
+  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions"), extra_header: None })
 }
 
 # ── LiteLLM proxy (OpenAI-compatible, routes to any backend) ─────────────────
@@ -253,7 +265,7 @@ fn litellm() -> [env] prov.Provider {
     None => "",
     Some(k) => k,
   }
-  no_stream(oai.make_provider({ api_key: api_key, base_url: url }))
+  no_stream(oai.make_provider({ api_key: api_key, base_url: url, extra_header: None }))
 }
 
 fn litellm_at(base_url :: Str) -> prov.Provider {
@@ -262,7 +274,7 @@ fn litellm_at(base_url :: Str) -> prov.Provider {
   } else {
     str.concat(base_url, "/v1/chat/completions")
   }
-  no_stream(oai.make_provider({ api_key: "", base_url: url }))
+  no_stream(oai.make_provider({ api_key: "", base_url: url, extra_header: None }))
 }
 
 # Same provider, streaming half removed — see litellm()'s own comment for why.

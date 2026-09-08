@@ -44,10 +44,27 @@ fn default_base_url() -> Str {
   "https://api.openai.com/v1/chat/completions"
 }
 
-type OpenAIConfig = { api_key :: Str, base_url :: Str }
+# `extra_header` is one (name, value) pair applied on top of the standard
+# content-type/accept/authorization headers -- opencode-go's endpoint
+# refuses every request missing `x-opencode-session` ("Request is missing
+# x-opencode-session and cannot be routed efficiently"), and this adapter
+# is the one every OpenAI-compatible backend shares, so there was nowhere
+# to attach a backend-specific header until now. `Option[(Str, Str)]`
+# rather than `Map[Str, Str]`: std.map has no fold/to_list to merge a
+# whole map's worth of entries with, and nothing here needs more than one
+# extra header yet -- widen this only when a second caller actually needs
+# a second one.
+type OpenAIConfig = { api_key :: Str, base_url :: Str, extra_header :: Option[(Str, Str)] }
 
 fn default_config(api_key :: Str) -> OpenAIConfig {
-  { api_key: api_key, base_url: default_base_url() }
+  { api_key: api_key, base_url: default_base_url(), extra_header: None }
+}
+
+fn apply_extra_header(hdrs :: Map[Str, Str], extra :: Option[(Str, Str)]) -> Map[Str, Str] {
+  match extra {
+    None => hdrs,
+    Some((k, v)) => map.set(hdrs, k, v),
+  }
 }
 
 fn make_provider(config :: OpenAIConfig) -> prov.Provider {
@@ -58,13 +75,14 @@ fn make_provider(config :: OpenAIConfig) -> prov.Provider {
   }, init: JList([]), step: stream_step }) }
 }
 
-fn stream_headers(api_key :: Str) -> Map[Str, Str] {
+fn stream_headers(api_key :: Str, extra :: Option[(Str, Str)]) -> Map[Str, Str] {
   let base := map.set(map.set(map.new(), "content-type", "application/json"), "accept", "text/event-stream")
-  if str.is_empty(api_key) {
+  let with_auth := if str.is_empty(api_key) {
     base
   } else {
     map.set(base, "authorization", str.concat("Bearer ", api_key))
   }
+  apply_extra_header(with_auth, extra)
 }
 
 # The api_key is empty for the local backends (vLLM, moe, mlx) that route
@@ -73,7 +91,7 @@ fn stream_headers(api_key :: Str) -> Map[Str, Str] {
 # sent blank -- which is also what the non-streaming path should do, but
 # changing that is not this commit's business.
 fn open_stream(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Result[Stream[Str], Str] {
-  http.stream_lines(config.base_url, stream_headers(config.api_key), build_stream_request(model, messages, tools))
+  http.stream_lines(config.base_url, stream_headers(config.api_key, config.extra_header), build_stream_request(model, messages, tools))
 }
 
 # chat -- one non-streaming completion, decoded into Deltas.
@@ -91,7 +109,7 @@ fn open_stream(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[
 # output. They now surface as text so the failure reaches the trail and a human.
 fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let body := build_request(model, messages, tools)
-  let hdrs := map.set(map.set(map.new(), "content-type", "application/json"), "authorization", str.concat("Bearer ", config.api_key))
+  let hdrs := apply_extra_header(map.set(map.set(map.new(), "content-type", "application/json"), "authorization", str.concat("Bearer ", config.api_key)), config.extra_header)
   let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }
   let deltas := match http.send(req) {
     Err(_) => d.provider_error("request failed or timed out"),
