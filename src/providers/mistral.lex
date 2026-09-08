@@ -22,7 +22,7 @@ fn default_config(api_key :: Str) -> MistralConfig {
 }
 
 fn make_provider(config :: MistralConfig) -> prov.Provider {
-  let inner := openai.make_provider({ api_key: config.api_key, base_url: config.base_url })
+  let inner := openai.make_provider({ api_key: config.api_key, base_url: config.base_url, extra_header: None })
   { name: "mistral", chat: inner.chat, stream: inner.stream }
 }
 

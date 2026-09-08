@@ -74,7 +74,7 @@ fn replay_of(p :: prov.Provider, lines :: List[Str]) -> Result[Str, Str] {
 }
 
 fn openai_provider() -> prov.Provider {
-  oai.make_provider({ api_key: "k", base_url: "http://127.0.0.1:1/v1/chat/completions" })
+  oai.make_provider({ api_key: "k", base_url: "http://127.0.0.1:1/v1/chat/completions", extra_header: None })
 }
 
 fn anthropic_provider() -> prov.Provider {
