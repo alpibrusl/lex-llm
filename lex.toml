@@ -1,6 +1,7 @@
 [package]
 name        = "lex-llm"
 version     = "0.2.0"
+lex         = "0.10.18"
 description = "Pure-Lex LLM-agent runtime — provider abstraction, tool-call loop, structured-output validation, and lex-spec permission gating."
 
 [dependencies]

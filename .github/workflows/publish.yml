@@ -1,7 +1,37 @@
 name: Publish to lex-hub
+
+# Publishes on a TAG, not on every push to main.
+#
+# There used to be a version-string gate here (run only when lex.toml's
+# `version` changed between commits). It silently no-op'd every push for
+# months: nothing bumps `version` routinely, so the job reported success in
+# 9 seconds having published nothing. lex-schema#38 removed the same gate and
+# published on every push instead -- and measured on its runs, that is the
+# wrong fix: republishing an already-published version does not no-op, it
+# returns 409 after roughly an hour, so every push without a version bump
+# went red; and every version bump is a commit that drifts every downstream
+# consumer (three red builds fleet-wide on one day, 2026-09-11, each from a
+# one-line lex-schema bump).
+#
+# A tag makes a release a deliberate act: bump `version` in lex.toml, tag it
+# v<version>, push the tag. Nothing publishes by accident, main never goes red
+# for lacking a bump, and consumers drift once per release rather than once
+# per merge. A publish still takes 26-62 minutes (a lex-hub problem, not this
+# workflow's), so it should not be something every merge triggers.
+#
+# The steps are INLINED, not a cross-repo `uses:` of lex-hub's reusable
+# workflow. This repo adopted the reusable form for about an hour on
+# 2026-09-11; the same day, every package repo that had adopted it moved back
+# to an inlined copy ("ci: inline the publish workflow instead of a cross-repo
+# reusable one" -- lex-agent e5a0e47, lex-web, lex-trail, lex-orm). Following
+# the fleet keeps this workflow runnable without depending on another repo
+# resolving at run time. The body below is that inlined copy, except that a
+# missing `lex` pin FAILS here rather than falling back to an older toolchain:
+# this repo declares the pin, and a silent fallback would be a silent
+# downgrade.
 on:
   push:
-    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 jobs:
@@ -12,26 +42,34 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Check if version changed
-        id: ver
+      # No version-string gate here on purpose (there used to be one,
+      # keyed off whether lex.toml's `version` field changed between
+      # commits -- removed because it silently no-op'd every push for
+      # months: real commits landed without ever bumping `version`, so
+      # the gate always evaluated false, and the job still reported
+      # success in under 10s every time. lex-hub's store is
+      # content-addressed, so republishing unchanged functions creates
+      # no new operations -- running this unconditionally on every push
+      # to main is safe and idempotent, and removes the whole class of
+      # bug rather than just narrowing it.
+
+      - name: Read required lex version from lex.toml
+        id: lexver
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
-            OLD=$(git show HEAD~1:lex.toml 2>/dev/null | grep '^version' | head -1 || echo "")
-            NEW=$(grep '^version' lex.toml | head -1)
-            [ "$OLD" != "$NEW" ] && echo "changed=true" >> $GITHUB_OUTPUT \
-                                  || echo "changed=false" >> $GITHUB_OUTPUT
+          v=$(grep -m1 '^lex ' lex.toml | sed 's/.*= *"\(.*\)"/\1/')
+          if [ -z "$v" ]; then
+            echo "lex.toml has no top-level 'lex' version pin" >&2
+            exit 1
           fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Install lex
-        if: steps.ver.outputs.changed == 'true'
         run: |
-          curl -fsSL "https://github.com/alpibrusl/lex-lang/releases/download/v0.10.18/lex-v0.10.18-x86_64-unknown-linux-gnu.tar.gz" \
+          v="${{ steps.lexver.outputs.version }}"
+          curl -fsSL "https://github.com/alpibrusl/lex-lang/releases/download/v${v}/lex-v${v}-x86_64-unknown-linux-gnu.tar.gz" \
             | tar -xz --strip-components=1 -C /usr/local/bin
 
       - name: Mint JWT + publish
-        if: steps.ver.outputs.changed == 'true'
         env:
           LEXHUB_ADMIN_SECRET: ${{ secrets.LEXHUB_ADMIN_SECRET }}
         run: |
@@ -42,7 +80,6 @@ jobs:
           lex pkg publish --registry https://vcs.lexlang.org --token "$JWT"
 
       - name: Set visibility public
-        if: steps.ver.outputs.changed == 'true'
         env:
           LEXHUB_ADMIN_SECRET: ${{ secrets.LEXHUB_ADMIN_SECRET }}
         run: |
