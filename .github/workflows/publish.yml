@@ -69,26 +69,18 @@ jobs:
           curl -fsSL "https://github.com/alpibrusl/lex-lang/releases/download/v${v}/lex-v${v}-x86_64-unknown-linux-gnu.tar.gz" \
             | tar -xz --strip-components=1 -C /usr/local/bin
 
-      - name: Mint JWT + publish
+      - name: Publish
         env:
-          LEXHUB_ADMIN_SECRET: ${{ secrets.LEXHUB_ADMIN_SECRET }}
+          LEX_HUB_API_KEY: ${{ secrets.LEX_HUB_API_KEY }}
         run: |
-          JWT=$(curl -sf -X POST https://vcs.lexlang.org/v1/admin/mint \
-            -H "Authorization: Bearer $LEXHUB_ADMIN_SECRET" \
-            -H "Content-Type: application/json" \
-            -d '{"tenant_id":"alpibrusl","ttl_secs":3600}' | jq -r .token)
-          lex pkg publish --registry https://vcs.lexlang.org --token "$JWT"
+          lex pkg publish --registry https://vcs.lexlang.org --token "$LEX_HUB_API_KEY"
 
       - name: Set visibility public
         env:
-          LEXHUB_ADMIN_SECRET: ${{ secrets.LEXHUB_ADMIN_SECRET }}
+          LEX_HUB_API_KEY: ${{ secrets.LEX_HUB_API_KEY }}
         run: |
-          JWT=$(curl -sf -X POST https://vcs.lexlang.org/v1/admin/mint \
-            -H "Authorization: Bearer $LEXHUB_ADMIN_SECRET" \
-            -H "Content-Type: application/json" \
-            -d '{"tenant_id":"alpibrusl","ttl_secs":300}' | jq -r .token)
           PKG=$(grep -m1 '^name' lex.toml | sed 's/.*= *"\(.*\)"/\1/')
           curl -sf -X PUT "https://vcs.lexlang.org/v1/pkg/${PKG}/visibility" \
-            -H "Authorization: Bearer $JWT" \
+            -H "Authorization: Bearer $LEX_HUB_API_KEY" \
             -H "Content-Type: application/json" \
             -d '{"visibility":"public"}' || true
