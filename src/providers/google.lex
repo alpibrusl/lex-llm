@@ -29,14 +29,21 @@ import "std.str" as str
 
 import "std.iter" as iter
 
-type GoogleConfig = { api_key :: Str }
+type GoogleConfig = { api_key :: Str, timeout_ms :: Option[Int] }
 
 fn default_config(api_key :: Str) -> GoogleConfig {
-  { api_key: api_key }
+  { api_key: api_key, timeout_ms: None }
 }
 
 fn gemini_url(model :: Str, api_key :: Str) -> Str {
   str.concat("https://generativelanguage.googleapis.com/v1beta/models/", str.concat(model, str.concat(":streamGenerateContent?key=", api_key)))
+}
+
+# The same config with an explicit client timeout, for a caller that knows its
+# model is slower than the default (a local 27B answering a build prompt) or
+# faster.
+fn with_timeout(c :: GoogleConfig, ms :: Int) -> GoogleConfig {
+  { api_key: c.api_key, timeout_ms: Some(ms) }
 }
 
 fn make_provider(config :: GoogleConfig) -> prov.Provider {

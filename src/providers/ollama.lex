@@ -17,6 +17,8 @@ import "../tool" as t
 
 import "../provider" as prov
 
+import "../timeout" as tmo
+
 import "lex-schema/json_value" as jv
 
 import "std.http" as http
@@ -45,14 +47,21 @@ fn default_base_url() -> Str {
 # Stored as a raw Str rather than a typed enum so a level Ollama adds later
 # doesn't need a new variant here — encode_think below is the only place
 # that has to agree with Ollama's own vocabulary.
-type OllamaConfig = { base_url :: Str, think :: Option[Str] }
+type OllamaConfig = { base_url :: Str, think :: Option[Str], timeout_ms :: Option[Int] }
 
 fn default_config() -> OllamaConfig
   examples {
-    default_config() => { base_url: "http://localhost:11434/api/chat", think: None }
+    default_config() => { base_url: "http://localhost:11434/api/chat", think: None, timeout_ms: None }
   }
 {
-  { base_url: default_base_url(), think: None }
+  { base_url: default_base_url(), think: None, timeout_ms: None }
+}
+
+# The same config with an explicit client timeout, for a caller that knows its
+# model is slower than the default (a local 27B answering a build prompt) or
+# faster.
+fn with_timeout(c :: OllamaConfig, ms :: Int) -> OllamaConfig {
+  { base_url: c.base_url, think: c.think, timeout_ms: Some(ms) }
 }
 
 fn make_provider(config :: OllamaConfig) -> prov.Provider {
@@ -70,7 +79,7 @@ fn open_stream(config :: OllamaConfig, model :: prov.ModelRef, messages :: List[
 fn chat(config :: OllamaConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let body := build_request(model, messages, tools, config.think)
   let hdrs := map.set(map.set(map.new(), "content-type", "application/json"), "connection", "close")
-  let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }
+  let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(tmo.or_default(config.timeout_ms)) }
   match http.send(req) {
     Err(_) => iter.from_list(d.provider_error("request failed or timed out")),
     Ok(r) => if r.status >= 400 {

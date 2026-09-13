@@ -22,6 +22,8 @@ import "../tool" as t
 
 import "../provider" as prov
 
+import "../timeout" as tmo
+
 import "lex-schema/json_value" as jv
 
 import "std.http" as http
@@ -54,10 +56,10 @@ fn default_base_url() -> Str {
 # whole map's worth of entries with, and nothing here needs more than one
 # extra header yet -- widen this only when a second caller actually needs
 # a second one.
-type OpenAIConfig = { api_key :: Str, base_url :: Str, extra_header :: Option[(Str, Str)] }
+type OpenAIConfig = { api_key :: Str, base_url :: Str, extra_header :: Option[(Str, Str)], timeout_ms :: Option[Int] }
 
 fn default_config(api_key :: Str) -> OpenAIConfig {
-  { api_key: api_key, base_url: default_base_url(), extra_header: None }
+  { api_key: api_key, base_url: default_base_url(), extra_header: None, timeout_ms: None }
 }
 
 fn apply_extra_header(hdrs :: Map[Str, Str], extra :: Option[(Str, Str)]) -> Map[Str, Str] {
@@ -65,6 +67,13 @@ fn apply_extra_header(hdrs :: Map[Str, Str], extra :: Option[(Str, Str)]) -> Map
     None => hdrs,
     Some((k, v)) => map.set(hdrs, k, v),
   }
+}
+
+# The same config with an explicit client timeout, for a caller that knows its
+# model is slower than the default (a local 27B answering a build prompt) or
+# faster.
+fn with_timeout(c :: OpenAIConfig, ms :: Int) -> OpenAIConfig {
+  { api_key: c.api_key, base_url: c.base_url, extra_header: c.extra_header, timeout_ms: Some(ms) }
 }
 
 fn make_provider(config :: OpenAIConfig) -> prov.Provider {
@@ -110,7 +119,7 @@ fn open_stream(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[
 fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let body := build_request(model, messages, tools)
   let hdrs := apply_extra_header(map.set(map.set(map.new(), "content-type", "application/json"), "authorization", str.concat("Bearer ", config.api_key)), config.extra_header)
-  let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }
+  let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(tmo.or_default(config.timeout_ms)) }
   let deltas := match http.send(req) {
     Err(_) => d.provider_error("request failed or timed out"),
     Ok(r) => if r.status >= 400 {
