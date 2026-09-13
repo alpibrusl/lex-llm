@@ -24,6 +24,8 @@ import "../tool" as t
 
 import "../provider" as prov
 
+import "../timeout" as tmo
+
 import "../sse" as sse
 
 import "lex-schema/json_value" as jv
@@ -50,10 +52,17 @@ fn api_version() -> Str {
   "2023-06-01"
 }
 
-type AnthropicConfig = { api_key :: Str, base_url :: Str }
+type AnthropicConfig = { api_key :: Str, base_url :: Str, timeout_ms :: Option[Int] }
 
 fn default_config(api_key :: Str) -> AnthropicConfig {
-  { api_key: api_key, base_url: default_base_url() }
+  { api_key: api_key, base_url: default_base_url(), timeout_ms: None }
+}
+
+# The same config with an explicit client timeout, for a caller that knows its
+# model is slower than the default (a local 27B answering a build prompt) or
+# faster.
+fn with_timeout(c :: AnthropicConfig, ms :: Int) -> AnthropicConfig {
+  { api_key: c.api_key, base_url: c.base_url, timeout_ms: Some(ms) }
 }
 
 fn make_provider(config :: AnthropicConfig) -> prov.Provider {
@@ -86,7 +95,7 @@ fn chat(config :: AnthropicConfig, model :: prov.ModelRef, messages :: List[msg.
     (_, ms) => ms,
   }
   let body := build_request(model, sys, user_msgs, tools)
-  let req := { method: "POST", url: config.base_url, headers: build_headers(config.api_key), body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }
+  let req := { method: "POST", url: config.base_url, headers: build_headers(config.api_key), body: Some(bytes.from_str(body)), timeout_ms: Some(tmo.or_default(config.timeout_ms)) }
   match http.send(req) {
     Err(_) => iter.from_list(d.provider_error("request failed or timed out")),
     Ok(r) => if r.status >= 400 {

@@ -24,6 +24,8 @@ import "./providers/google" as goog
 
 import "./providers/ollama" as olla
 
+import "./timeout" as tmo
+
 import "./providers/mistral" as mist
 
 import "./providers/vertex" as vtx
@@ -38,11 +40,11 @@ fn get_key(var_name :: Str) -> [env] Str {
 }
 
 fn anthropic() -> [env] prov.Provider {
-  anth.make_provider(anth.default_config(get_key("ANTHROPIC_API_KEY")))
+  anth.make_provider(anth.with_timeout(anth.default_config(get_key("ANTHROPIC_API_KEY")), tmo.resolved_timeout_ms()))
 }
 
 fn openai() -> [env] prov.Provider {
-  oai.make_provider(oai.default_config(get_key("OPENAI_API_KEY")))
+  oai.make_provider(oai.with_timeout(oai.default_config(get_key("OPENAI_API_KEY")), tmo.resolved_timeout_ms()))
 }
 
 # OpenCode Go plan — https://opencode.ai/docs/zen
@@ -79,15 +81,15 @@ fn opencode_go_at(url :: Str, key :: Str) -> prov.Provider {
   } else {
     url
   }
-  oai.make_provider({ api_key: key, base_url: base, extra_header: Some(("x-opencode-session", crypto.sha256_str(key))) })
+  oai.make_provider({ api_key: key, base_url: base, extra_header: Some(("x-opencode-session", crypto.sha256_str(key))), timeout_ms: None })
 }
 
 fn google() -> [env] prov.Provider {
-  goog.make_provider(goog.default_config(get_key("GOOGLE_API_KEY")))
+  goog.make_provider(goog.with_timeout(goog.default_config(get_key("GOOGLE_API_KEY")), tmo.resolved_timeout_ms()))
 }
 
 fn mistral() -> [env] prov.Provider {
-  mist.make_provider(mist.default_config(get_key("MISTRAL_API_KEY")))
+  mist.make_provider(mist.with_timeout(mist.default_config(get_key("MISTRAL_API_KEY")), tmo.resolved_timeout_ms()))
 }
 
 fn mistral_with_key(api_key :: Str) -> prov.Provider {
@@ -162,10 +164,11 @@ fn ollama_think() -> [env] Option[Str] {
 }
 
 fn ollama_local() -> [env] prov.Provider {
-  ollama_at_think(normalize_host(match env.get("OLLAMA_BASE_URL") {
+  let host := normalize_host(match env.get("OLLAMA_BASE_URL") {
     None => "",
     Some(u) => u,
-  }), ollama_think())
+  })
+  olla.make_provider(olla.with_timeout({ base_url: str.concat(host, "/api/chat"), think: ollama_think(), timeout_ms: None }, tmo.resolved_timeout_ms()))
 }
 
 fn ollama_model() -> [env] Str {
@@ -182,11 +185,11 @@ fn ollama_model() -> [env] Str {
 # `ollama_agent()`) is the one path that can actually set OLLAMA_THINK,
 # via ollama_at_think below.
 fn ollama_at(host :: Str) -> prov.Provider {
-  olla.make_provider({ base_url: str.concat(host, "/api/chat"), think: None })
+  olla.make_provider({ base_url: str.concat(host, "/api/chat"), think: None, timeout_ms: None })
 }
 
 fn ollama_at_think(host :: Str, think :: Option[Str]) -> prov.Provider {
-  olla.make_provider({ base_url: str.concat(host, "/api/chat"), think: think })
+  olla.make_provider({ base_url: str.concat(host, "/api/chat"), think: think, timeout_ms: None })
 }
 
 # vLLM — OpenAI-compatible, no key required by default.
@@ -204,11 +207,11 @@ fn vllm_local() -> [env] prov.Provider {
     None => "http://localhost:8000/v1/chat/completions",
     Some(u) => u,
   }
-  oai.make_provider({ api_key: "", base_url: base_url, extra_header: None })
+  oai.make_provider({ api_key: "", base_url: base_url, extra_header: None, timeout_ms: Some(tmo.resolved_timeout_ms()) })
 }
 
 fn vllm_at(host :: Str) -> prov.Provider {
-  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions"), extra_header: None })
+  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions"), extra_header: None, timeout_ms: None })
 }
 
 # ── lex-moe (self-hosted, streamed-from-NVMe MoE inference) ──────────────────
@@ -233,11 +236,11 @@ fn moe_local() -> [env] prov.Provider {
     None => "http://127.0.0.1:8080/v1/chat/completions",
     Some(u) => u,
   }
-  oai.make_provider({ api_key: "", base_url: base_url, extra_header: None })
+  oai.make_provider({ api_key: "", base_url: base_url, extra_header: None, timeout_ms: Some(tmo.resolved_timeout_ms()) })
 }
 
 fn moe_at(host :: Str) -> prov.Provider {
-  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions"), extra_header: None })
+  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions"), extra_header: None, timeout_ms: None })
 }
 
 # ── MLX (Apple Silicon) ───────────────────────────────────────────────────────
@@ -254,7 +257,7 @@ fn mlx_model() -> [env] Str {
 }
 
 fn mlx_at(host :: Str) -> prov.Provider {
-  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions"), extra_header: None })
+  oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions"), extra_header: None, timeout_ms: None })
 }
 
 # ── LiteLLM proxy (OpenAI-compatible, routes to any backend) ─────────────────
@@ -293,7 +296,7 @@ fn litellm() -> [env] prov.Provider {
     None => "",
     Some(k) => k,
   }
-  no_stream(oai.make_provider({ api_key: api_key, base_url: url, extra_header: None }))
+  no_stream(oai.make_provider({ api_key: api_key, base_url: url, extra_header: None, timeout_ms: Some(tmo.resolved_timeout_ms()) }))
 }
 
 fn litellm_at(base_url :: Str) -> prov.Provider {
@@ -302,7 +305,7 @@ fn litellm_at(base_url :: Str) -> prov.Provider {
   } else {
     str.concat(base_url, "/v1/chat/completions")
   }
-  no_stream(oai.make_provider({ api_key: "", base_url: url, extra_header: None }))
+  no_stream(oai.make_provider({ api_key: "", base_url: url, extra_header: None, timeout_ms: None }))
 }
 
 # Same provider, streaming half removed — see litellm()'s own comment for why.

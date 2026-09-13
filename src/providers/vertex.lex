@@ -26,6 +26,8 @@ import "../tool" as t
 
 import "../provider" as prov
 
+import "../timeout" as tmo
+
 import "lex-schema/json_value" as jv
 
 import "std.http" as http
@@ -43,14 +45,14 @@ import "std.iter" as iter
 # ── Config ────────────────────────────────────────────────────────────────────
 # access_token: OAuth2 Bearer token (from `gcloud auth print-access-token`)
 #               or a GCP service account access token.
-type VertexConfig = { access_token :: Str, project_id :: Str, location :: Str }
+type VertexConfig = { access_token :: Str, project_id :: Str, location :: Str, timeout_ms :: Option[Int] }
 
 fn default_config(access_token :: Str, project_id :: Str) -> VertexConfig {
-  { access_token: access_token, project_id: project_id, location: "eu" }
+  { access_token: access_token, project_id: project_id, location: "eu", timeout_ms: None }
 }
 
 fn config_at(access_token :: Str, project_id :: Str, location :: Str) -> VertexConfig {
-  { access_token: access_token, project_id: project_id, location: location }
+  { access_token: access_token, project_id: project_id, location: location, timeout_ms: None }
 }
 
 # ── URL builder ───────────────────────────────────────────────────────────────
@@ -81,6 +83,13 @@ fn gemini_35_pro() -> prov.ModelRef {
 }
 
 # ── Provider factory ──────────────────────────────────────────────────────────
+# The same config with an explicit client timeout, for a caller that knows its
+# model is slower than the default (a local 27B answering a build prompt) or
+# faster.
+fn with_timeout(c :: VertexConfig, ms :: Int) -> VertexConfig {
+  { access_token: c.access_token, project_id: c.project_id, location: c.location, timeout_ms: Some(ms) }
+}
+
 fn make_provider(config :: VertexConfig) -> prov.Provider {
   { name: "vertex", chat: fn (model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
     chat(config, model, messages, tools)
@@ -101,7 +110,7 @@ fn streaming_supported() -> Bool
 fn chat(config :: VertexConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
   let url := vertex_url(config, model.model)
   let body := build_request(messages, tools)
-  let req := http.with_header(http.with_header({ method: "POST", url: url, headers: map.new(), body: Some(bytes.from_str(body)), timeout_ms: Some(600000) }, "Content-Type", "application/json"), "Authorization", str.concat("Bearer ", config.access_token))
+  let req := http.with_header(http.with_header({ method: "POST", url: url, headers: map.new(), body: Some(bytes.from_str(body)), timeout_ms: Some(tmo.or_default(config.timeout_ms)) }, "Content-Type", "application/json"), "Authorization", str.concat("Bearer ", config.access_token))
   match http.send(req) {
     Err(_) => iter.from_list(d.provider_error("request failed or timed out")),
     Ok(r) => match bytes.to_str(r.body) {
