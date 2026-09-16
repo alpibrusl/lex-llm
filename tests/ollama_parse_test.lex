@@ -90,16 +90,16 @@ fn delta_tag(d :: Delta) -> Str {
 }
 
 fn main() -> Str {
-  let line1 := "{\"model\":\"gemma4:26b\",\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"function\":{\"name\":\"write\",\"arguments\":{\"path\":\"hello.lex\",\"content\":\"fn hello() -> Str { \\\"hi\\\" }\"}}}]},\"done\":false}"
-  let line2 := "{\"model\":\"gemma4:26b\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"stop\"}"
+  let line1 := "{\"model\":\"qwen3.8:27b-mlx\",\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"function\":{\"name\":\"write\",\"arguments\":{\"path\":\"hello.lex\",\"content\":\"fn hello() -> Str { \\\"hi\\\" }\"}}}]},\"done\":false}"
+  let line2 := "{\"model\":\"qwen3.8:27b-mlx\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"stop\"}"
   let r1 := {
     let lines := [line1, line2]
     let deltas := parse_stream(lines)
     let tags := list.map(deltas, delta_tag)
     str.concat("orig: ", str.concat(int.to_str(list.len(deltas)), str.concat(": ", str.join(tags, ","))))
   }
-  let live1 := "{\"model\":\"gemma4:latest\",\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_eftl5i9l\",\"function\":{\"index\":0,\"name\":\"write\",\"arguments\":{\"content\":\"fn sum() -> Int { 42 }\",\"path\":\"sum.lex\"}}}]},\"done\":false}"
-  let live2 := "{\"model\":\"gemma4:latest\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"stop\"}"
+  let live1 := "{\"model\":\"qwen3.8:27b-mlx\",\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_eftl5i9l\",\"function\":{\"index\":0,\"name\":\"write\",\"arguments\":{\"content\":\"fn sum() -> Int { 42 }\",\"path\":\"sum.lex\"}}}]},\"done\":false}"
+  let live2 := "{\"model\":\"qwen3.8:27b-mlx\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"stop\"}"
   let r2 := {
     let lines := [live1, live2]
     let deltas := parse_stream(lines)
