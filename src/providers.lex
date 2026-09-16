@@ -173,7 +173,7 @@ fn ollama_local() -> [env] prov.Provider {
 
 fn ollama_model() -> [env] Str {
   match env.get("OLLAMA_MODEL") {
-    None => "gemma4:latest",
+    None => "qwen3.8:27b-mlx",
     Some(m) => m,
   }
 }
