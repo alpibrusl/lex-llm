@@ -62,6 +62,20 @@ fn default_config(api_key :: Str) -> OpenAIConfig {
   { api_key: api_key, base_url: default_base_url(), extra_header: None, timeout_ms: None }
 }
 
+# The same, against an OpenAI-compatible endpoint that is not OpenAI's own —
+# OpenCode Zen, a LiteLLM proxy, a self-hosted vLLM. Mirrors
+# `vertex.config_at`.
+#
+# This exists because its absence had a cost. With no constructor taking a
+# base_url, three downstream repos (lex-conquest, lex-robot, lex-werewolf)
+# each hand-wrote `{ api_key: ..., base_url: ... }` at the call site, so
+# adding `extra_header` and `timeout_ms` to OpenAIConfig broke all three at
+# once. Constructing a library's record by hand makes every future field a
+# breaking change for every caller; this is the seam that stops that.
+fn config_at(api_key :: Str, base_url :: Str) -> OpenAIConfig {
+  { api_key: api_key, base_url: base_url, extra_header: None, timeout_ms: None }
+}
+
 fn apply_extra_header(hdrs :: Map[Str, Str], extra :: Option[(Str, Str)]) -> Map[Str, Str] {
   match extra {
     None => hdrs,
