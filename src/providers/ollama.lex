@@ -57,6 +57,17 @@ fn default_config() -> OllamaConfig
   { base_url: default_base_url(), think: None, timeout_ms: None }
 }
 
+# The same, against an endpoint other than the default — a proxy, a gateway,
+# or a host on the LAN. Mirrors `vertex.config_at` and `openai.config_at`.
+#
+# Every provider config here needs one: without a constructor taking the
+# endpoint, callers hand-write the record, and then adding a field to the
+# config breaks every caller at once. That is not hypothetical — it is how
+# lex-conquest, lex-robot and lex-werewolf all broke (see openai.config_at).
+fn config_at(base_url :: Str) -> OllamaConfig {
+  { base_url: base_url, think: None, timeout_ms: None }
+}
+
 # The same config with an explicit client timeout, for a caller that knows its
 # model is slower than the default (a local 27B answering a build prompt) or
 # faster.
