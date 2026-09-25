@@ -242,6 +242,25 @@ fn test_strip_cr() -> Result[Unit, Str] {
   }
 }
 
+# ---- lex-gpu ------------------------------------------------------
+# Recorded from lex-gpu's own server (`lex-rt --example serve`, Qwen3.8-27B
+# on Metal), not hand-written: it answers OpenAI chat completions from its
+# own compiled kernels, and the point of the test is that the shape it puts
+# on the wire is one this adapter already reads. Chunks elided from the
+# middle of the reasoning; the first, the two that matter and the last are
+# byte-for-byte what the server sent.
+#
+# It also records what lex-gpu does *not* do yet: the `<think>` block
+# arrives as ordinary `content` rather than `reasoning_content`, so it lands
+# in the reply text. That is the gap to close upstream before its replies
+# can carry tool calls -- see `lex_gpu_at` in src/providers.lex.
+fn test_lex_gpu_stream() -> Result[Unit, Str] {
+  match replay_of(openai_provider(), ["data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"qwen3.8:27b-mlx\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}", "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"qwen3.8:27b-mlx\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<think>\\n\"},\"finish_reason\":null}]}", "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"qwen3.8:27b-mlx\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"</think>\\n\\n\"},\"finish_reason\":null}]}", "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"qwen3.8:27b-mlx\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":null}]}", "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"qwen3.8:27b-mlx\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}", "data: [DONE]"]) {
+    Err(e) => Err(e),
+    Ok(got) => expect("lex-gpu stream", got, "Text(<think>\n) Text(</think>\n\n) Text(OK) Finish(stop)"),
+  }
+}
+
 # ---- Cursor -------------------------------------------------------
 fn test_cursor_starts_open() -> Result[Unit, Str] {
   match stream_of(openai_provider()) {
@@ -255,7 +274,7 @@ fn test_cursor_starts_open() -> Result[Unit, Str] {
 }
 
 fn run_all() -> [io] Int {
-  let results := [("streaming_declared", test_streaming_declared()), ("google_declares_none", test_google_declares_none()), ("mistral_inherits_streaming", test_mistral_inherits_streaming()), ("openai_text_chunks", test_openai_text_chunks()), ("openai_split_tool_call", test_openai_split_tool_call()), ("openai_two_tool_calls", test_openai_two_tool_calls()), ("openai_usage_chunk", test_openai_usage_chunk()), ("openai_ignores_framing", test_openai_ignores_framing()), ("anthropic_text_and_finish", test_anthropic_text_and_finish()), ("anthropic_tool_use_routing", test_anthropic_tool_use_routing()), ("anthropic_crlf", test_anthropic_crlf()), ("ollama_text_flushes", test_ollama_text_flushes()), ("ollama_xml_tool_call_held_back", test_ollama_xml_tool_call_held_back()), ("ollama_angle_bracket_prose", test_ollama_angle_bracket_prose()), ("ollama_native_tool_call", test_ollama_native_tool_call()), ("strip_cr", test_strip_cr()), ("cursor_starts_open", test_cursor_starts_open())]
+  let results := [("streaming_declared", test_streaming_declared()), ("google_declares_none", test_google_declares_none()), ("mistral_inherits_streaming", test_mistral_inherits_streaming()), ("openai_text_chunks", test_openai_text_chunks()), ("openai_split_tool_call", test_openai_split_tool_call()), ("openai_two_tool_calls", test_openai_two_tool_calls()), ("openai_usage_chunk", test_openai_usage_chunk()), ("openai_ignores_framing", test_openai_ignores_framing()), ("anthropic_text_and_finish", test_anthropic_text_and_finish()), ("anthropic_tool_use_routing", test_anthropic_tool_use_routing()), ("anthropic_crlf", test_anthropic_crlf()), ("ollama_text_flushes", test_ollama_text_flushes()), ("ollama_xml_tool_call_held_back", test_ollama_xml_tool_call_held_back()), ("ollama_angle_bracket_prose", test_ollama_angle_bracket_prose()), ("ollama_native_tool_call", test_ollama_native_tool_call()), ("lex_gpu_stream", test_lex_gpu_stream()), ("strip_cr", test_strip_cr()), ("cursor_starts_open", test_cursor_starts_open())]
   list.fold(results, 0, fn (failures :: Int, entry :: (Str, Result[Unit, Str])) -> [io] Int {
     match entry {
       (name, result) => match result {
