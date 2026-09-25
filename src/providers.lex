@@ -243,6 +243,44 @@ fn moe_at(host :: Str) -> prov.Provider {
   oai.make_provider({ api_key: "", base_url: str.concat(host, "/v1/chat/completions"), extra_header: None, timeout_ms: None })
 }
 
+# ── lex-gpu (self-hosted, own GPU kernels on Metal and CUDA) ────────────────
+# `cargo run --release -p lex-rt --example serve -- --model <tag>` exposes the
+# same OpenAI-shaped POST /v1/chat/completions this adapter already drives
+# (default 127.0.0.1:8080, no key), answering from its own compiled kernels
+# rather than llama.cpp or MLX. Plain chat is verified end to end against
+# Qwen3.8-27B: `chat`, `stream`, `usage` and `[DONE]` all parse here unchanged.
+#
+# Today it is plain-chat only. The server accepts and ignores a `tools` list,
+# so the model is never told the tools exist and answers from its own head,
+# and replies carry no `tool_calls` — the loop therefore never sees
+# finish_reason "tool_calls" and never dispatches. Two upstream changes fix
+# it with no lex-llm-side change, since the wire shape does not move: render
+# `tools` into the prompt in the form the chat template expects, and split
+# the `<think>` block out of `content` into `reasoning_content`. After that a
+# `<tool_call>` reply is a shape this adapter already parses
+# (alpibrusl/lex-gpu).
+#
+# One request at a time by design: a second caller queues rather than
+# interleaving two sequences through one KV cache.
+fn lex_gpu_model() -> [env] Str {
+  match env.get("LEX_GPU_MODEL") {
+    None => "lex",
+    Some(m) => m,
+  }
+}
+
+fn lex_gpu_local() -> [env] prov.Provider {
+  let base_url := match env.get("LEX_GPU_BASE_URL") {
+    None => "http://127.0.0.1:8080/v1/chat/completions",
+    Some(u) => u,
+  }
+  oai.make_provider(oai.config_at("", base_url))
+}
+
+fn lex_gpu_at(host :: Str) -> prov.Provider {
+  oai.make_provider(oai.config_at("", str.concat(host, "/v1/chat/completions")))
+}
+
 # ── MLX (Apple Silicon) ───────────────────────────────────────────────────────
 # mlx_lm.server exposes an OpenAI-compatible POST /v1/chat/completions endpoint
 # with tool-calling support, so the OpenAI adapter drives it unchanged. Runs on
@@ -368,33 +406,37 @@ fn select_provider(name :: Str, url :: Str, key :: Str) -> prov.Provider {
           if name == "moe" {
             moe_at(url)
           } else {
-            if name == "openai" {
-              openai_with_key(key)
+            if name == "lex-gpu" {
+              lex_gpu_at(url)
             } else {
-              if name == "anthropic" {
-                anthropic_with_key(key)
+              if name == "openai" {
+                openai_with_key(key)
               } else {
-                if name == "google" {
-                  google_with_key(key)
+                if name == "anthropic" {
+                  anthropic_with_key(key)
                 } else {
-                  if name == "mistral" {
-                    mistral_with_key(key)
+                  if name == "google" {
+                    google_with_key(key)
                   } else {
-                    let parts := str.split(key, "|||")
-                    let token := match list.head(parts) {
-                      Some(s) => s,
-                      None => "",
-                    }
-                    let project := match str.strip_prefix(key, str.concat(token, "|||")) {
-                      Some(s) => s,
-                      None => "",
-                    }
-                    let location := if str.is_empty(url) {
-                      "eu"
+                    if name == "mistral" {
+                      mistral_with_key(key)
                     } else {
-                      url
+                      let parts := str.split(key, "|||")
+                      let token := match list.head(parts) {
+                        Some(s) => s,
+                        None => "",
+                      }
+                      let project := match str.strip_prefix(key, str.concat(token, "|||")) {
+                        Some(s) => s,
+                        None => "",
+                      }
+                      let location := if str.is_empty(url) {
+                        "eu"
+                      } else {
+                        url
+                      }
+                      vertex_with_config(token, project, location)
                     }
-                    vertex_with_config(token, project, location)
                   }
                 }
               }

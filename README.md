@@ -94,9 +94,10 @@ factories in `lex-llm/providers`:
 |---|---|---|
 | vLLM | `providers.vllm_at(host)` | host → `host + /v1/chat/completions` |
 | MLX (Apple Silicon) | `providers.mlx_at(host)` | `mlx_lm.server`, run with `--host 0.0.0.0`; e.g. `mlx-community/Qwen2.5-7B-Instruct-4bit` |
+| lex-gpu | `providers.lex_gpu_at(host)` | own Metal/CUDA kernels; default `127.0.0.1:8080`, no key. Plain chat only today — it drops `tools`, so agent loops get an answer but no tool call |
 
 `providers.select_provider(name, url, key)` builds any of the above from a
-`(name, url, key)` triple — `name` ∈ `mlx | ollama | vllm | openai | anthropic |
+`(name, url, key)` triple — `name` ∈ `mlx | ollama | vllm | lex-gpu | openai | anthropic |
 google | mistral | vertex` (vertex packs `key` as `"<access_token>|||<project>"`).
 The OpenAI adapter tolerates content-embedded tool calls (fenced ```json),
 leaked EOS tokens, and reasoning-only turns so local servers work out of the box.
