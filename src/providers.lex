@@ -59,7 +59,7 @@ fn opencode_go() -> [env] prov.Provider {
       str.concat(u, "/chat/completions")
     },
   }
-  opencode_go_at(url, get_key("OPENCODE_API_KEY"))
+  opencode_go_at_timeout(url, get_key("OPENCODE_API_KEY"), tmo.resolved_timeout_ms())
 }
 
 # OpenCode Go plan with an explicit key and optional base-url override.
@@ -75,13 +75,22 @@ fn opencode_go() -> [env] prov.Provider {
 # that can select this provider; any non-empty string satisfies the
 # endpoint (confirmed against the real API), so there is nothing this
 # needs beyond "consistent per key."
-fn opencode_go_at(url :: Str, key :: Str) -> prov.Provider {
+fn opencode_go_at_timeout(url :: Str, key :: Str, timeout_ms :: Int) -> prov.Provider {
   let base := if str.is_empty(url) {
     "https://opencode.ai/zen/go/v1/chat/completions"
   } else {
     url
   }
-  oai.make_provider({ api_key: key, base_url: base, extra_header: Some(("x-opencode-session", crypto.sha256_str(key))), timeout_ms: None })
+  oai.make_provider({ api_key: key, base_url: base, extra_header: Some(("x-opencode-session", crypto.sha256_str(key))), timeout_ms: Some(timeout_ms) })
+}
+
+# The other hosted providers give up on a stalled call after the shared
+# timeout; this one had `timeout_ms: None`, so a request that stopped
+# answering hung the caller forever (an agent run sat at 0% CPU for 46
+# minutes). `opencode_go()` reads LLM_TIMEOUT_MS; a caller that has no `env`
+# effect gets the default.
+fn opencode_go_at(url :: Str, key :: Str) -> prov.Provider {
+  opencode_go_at_timeout(url, key, tmo.default_timeout_ms())
 }
 
 fn google() -> [env] prov.Provider {
