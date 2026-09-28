@@ -137,7 +137,7 @@ fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Mes
   let deltas := match http.send(req) {
     Err(_) => d.provider_error("request failed or timed out"),
     Ok(r) => if r.status >= 400 {
-      d.provider_error(str.concat("HTTP ", int.to_str(r.status)))
+      d.provider_error(http_error_reason(r.status, r.body))
     } else {
       match bytes.to_str(r.body) {
         Err(_) => d.provider_error("response body was not valid UTF-8"),
@@ -149,6 +149,48 @@ fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Mes
     },
   }
   iter.from_list(deltas)
+}
+
+# "HTTP 429: Go usage limit exceeded" rather than a bare "HTTP 429". Every
+# OpenAI-shaped provider answers an error with {"error": {"message": ...}};
+# without it a rate limit, a rejected key and an unknown model all read the
+# same and the caller can only guess (a benchmark run burned every attempt on
+# a 5-hour usage limit it never learned about).
+fn error_message_of(body :: Str) -> Str
+  examples {
+    error_message_of("{\"error\": {\"message\": \"Go usage limit exceeded\"}}") => "Go usage limit exceeded",
+    error_message_of("{\"error\": {}}") => "",
+    error_message_of("not json") => ""
+  }
+{
+  match jv.parse_into_errors(body) {
+    Err(_) => "",
+    Ok(j) => match jv.get_field(j, "error") {
+      None => "",
+      Some(e) => match jv.get_field(e, "message") {
+        None => "",
+        Some(m) => match jv.as_str(m) {
+          None => "",
+          Some(text) => text,
+        },
+      },
+    },
+  }
+}
+
+fn http_error_reason(status :: Int, body :: Bytes) -> Str {
+  let base := str.concat("HTTP ", int.to_str(status))
+  match bytes.to_str(body) {
+    Err(_) => base,
+    Ok(s) => {
+      let m := error_message_of(s)
+      if str.is_empty(m) {
+        base
+      } else {
+        str.join([base, ": ", m], "")
+      }
+    },
+  }
 }
 
 # ---- Request building --------------------------------------------
