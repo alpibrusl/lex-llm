@@ -74,12 +74,26 @@ fn vertex_url(cfg :: VertexConfig, model :: Str) -> Str {
 }
 
 # ── Model refs ───────────────────────────────────────────────────────────────
+# Hardcoded version numbers rot: 3.5 was current when these were added,
+# then Google shipped 3.8 Flash / 3.1 Pro and started retiring the 2.5
+# line (confirmed live, 2026-10-02 pricing lookup). Kept for callers that
+# already pin a specific version; providers.vertex_model() below is the
+# one lex-code's vertex_agent() actually uses, so a future rename is one
+# env var away instead of a code change in nine agent files.
 fn gemini_35_flash() -> prov.ModelRef {
   { provider: "vertex", model: "gemini-3.5-flash" }
 }
 
 fn gemini_35_pro() -> prov.ModelRef {
   { provider: "vertex", model: "gemini-3.5-pro" }
+}
+
+fn gemini_38_flash() -> prov.ModelRef {
+  { provider: "vertex", model: "gemini-3.8-flash" }
+}
+
+fn gemini_31_pro() -> prov.ModelRef {
+  { provider: "vertex", model: "gemini-3.1-pro" }
 }
 
 # ── Provider factory ──────────────────────────────────────────────────────────

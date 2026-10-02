@@ -391,8 +391,24 @@ fn no_stream(p :: prov.Provider) -> prov.Provider {
 }
 
 # ── Vertex AI (Gemini via Google Cloud multi-region endpoint) ─────────────────
+# Model name for Vertex's Gemini endpoint. Override with VERTEX_MODEL.
+# Default is gemini-3.8-flash: confirmed current and unaffected by the
+# Gemini 2.5 line's 2026-10-16 retirement (2026-10-02 pricing lookup).
+fn vertex_model() -> [env] Str {
+  match env.get("VERTEX_MODEL") {
+    None => "gemini-3.8-flash",
+    Some(m) => if str.is_empty(m) {
+      "gemini-3.8-flash"
+    } else {
+      m
+    },
+  }
+}
+
 # Reads VERTEX_ACCESS_TOKEN, VERTEX_PROJECT, VERTEX_LOCATION from environment.
-# VERTEX_ACCESS_TOKEN = output of `gcloud auth print-access-token`.
+# VERTEX_ACCESS_TOKEN = output of `gcloud auth print-access-token` — a
+# short-lived OAuth2 token (~1h TTL), not a long-lived API key: re-export
+# it if a long `--auto` run outlives the token.
 # Default location: eu (aiplatform.eu.rep.googleapis.com).
 fn vertex() -> [env] prov.Provider {
   let token := get_key("VERTEX_ACCESS_TOKEN")
