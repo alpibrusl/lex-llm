@@ -56,10 +56,20 @@ fn default_base_url() -> Str {
 # whole map's worth of entries with, and nothing here needs more than one
 # extra header yet -- widen this only when a second caller actually needs
 # a second one.
-type OpenAIConfig = { api_key :: Str, base_url :: Str, extra_header :: Option[(Str, Str)], timeout_ms :: Option[Int] }
+#
+# `reasoning` mirrors `ollama_think`'s own `Option[Str]` convention in
+# providers.lex (see its comment): `Some("false")` sends
+# `chat_template_kwargs: {"enable_thinking": false}`; any other non-empty
+# value ("low"/"medium"/"high"/"xhigh") sends `reasoning_effort` instead.
+# `None` leaves both out, which renders the checkpoint's own default --
+# `xhigh` for Qwen3.8 against lex-gpu, confirmed the cause of a 2-2.5x
+# slowdown this adapter's one local backend (lex-gpu) showed against an
+# Ollama run with thinking off (alpibrusl/lex-code#216), since nothing
+# here could set it before now.
+type OpenAIConfig = { api_key :: Str, base_url :: Str, extra_header :: Option[(Str, Str)], timeout_ms :: Option[Int], reasoning :: Option[Str] }
 
 fn default_config(api_key :: Str) -> OpenAIConfig {
-  { api_key: api_key, base_url: default_base_url(), extra_header: None, timeout_ms: None }
+  { api_key: api_key, base_url: default_base_url(), extra_header: None, timeout_ms: None, reasoning: None }
 }
 
 # The same, against an OpenAI-compatible endpoint that is not OpenAI's own —
@@ -73,7 +83,7 @@ fn default_config(api_key :: Str) -> OpenAIConfig {
 # once. Constructing a library's record by hand makes every future field a
 # breaking change for every caller; this is the seam that stops that.
 fn config_at(api_key :: Str, base_url :: Str) -> OpenAIConfig {
-  { api_key: api_key, base_url: base_url, extra_header: None, timeout_ms: None }
+  { api_key: api_key, base_url: base_url, extra_header: None, timeout_ms: None, reasoning: None }
 }
 
 fn apply_extra_header(hdrs :: Map[Str, Str], extra :: Option[(Str, Str)]) -> Map[Str, Str] {
@@ -87,7 +97,28 @@ fn apply_extra_header(hdrs :: Map[Str, Str], extra :: Option[(Str, Str)]) -> Map
 # model is slower than the default (a local 27B answering a build prompt) or
 # faster.
 fn with_timeout(c :: OpenAIConfig, ms :: Int) -> OpenAIConfig {
-  { api_key: c.api_key, base_url: c.base_url, extra_header: c.extra_header, timeout_ms: Some(ms) }
+  { api_key: c.api_key, base_url: c.base_url, extra_header: c.extra_header, timeout_ms: Some(ms), reasoning: c.reasoning }
+}
+
+fn with_reasoning(c :: OpenAIConfig, r :: Option[Str]) -> OpenAIConfig {
+  { api_key: c.api_key, base_url: c.base_url, extra_header: c.extra_header, timeout_ms: c.timeout_ms, reasoning: r }
+}
+
+fn reasoning_fields(reasoning :: Option[Str]) -> List[(Str, jv.Json)]
+  examples {
+    reasoning_fields(None) => [],
+    reasoning_fields(Some("false")) => [("chat_template_kwargs", JObj([("enable_thinking", JBool(false))]))],
+    reasoning_fields(Some("xhigh")) => [("reasoning_effort", JStr("xhigh"))]
+  }
+{
+  match reasoning {
+    None => [],
+    Some(r) => if r == "false" {
+      [("chat_template_kwargs", JObj([("enable_thinking", JBool(false))]))]
+    } else {
+      [("reasoning_effort", JStr(r))]
+    },
+  }
 }
 
 fn make_provider(config :: OpenAIConfig) -> prov.Provider {
@@ -114,7 +145,7 @@ fn stream_headers(api_key :: Str, extra :: Option[(Str, Str)]) -> Map[Str, Str] 
 # sent blank -- which is also what the non-streaming path should do, but
 # changing that is not this commit's business.
 fn open_stream(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Result[Stream[Str], Str] {
-  http.stream_lines(config.base_url, stream_headers(config.api_key, config.extra_header), build_stream_request(model, messages, tools))
+  http.stream_lines(config.base_url, stream_headers(config.api_key, config.extra_header), build_stream_request(model, messages, tools, config.reasoning))
 }
 
 # chat -- one non-streaming completion, decoded into Deltas.
@@ -131,7 +162,7 @@ fn open_stream(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[
 # the caller logged an empty answer either way and reported it as the model's
 # output. They now surface as text so the failure reaches the trail and a human.
 fn chat(config :: OpenAIConfig, model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> [net, llm] Iter[d.Delta] {
-  let body := build_request(model, messages, tools)
+  let body := build_request(model, messages, tools, config.reasoning)
   let hdrs := apply_extra_header(map.set(map.set(map.new(), "content-type", "application/json"), "authorization", str.concat("Bearer ", config.api_key)), config.extra_header)
   let req := { method: "POST", url: config.base_url, headers: hdrs, body: Some(bytes.from_str(body)), timeout_ms: Some(tmo.or_default(config.timeout_ms)) }
   let deltas := match http.send(req) {
@@ -194,8 +225,8 @@ fn http_error_reason(status :: Int, body :: Bytes) -> Str {
 }
 
 # ---- Request building --------------------------------------------
-fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
-  let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(false)), ("max_tokens", JInt(8192))]
+fn build_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool], reasoning :: Option[Str]) -> Str {
+  let base := list.concat([("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(false)), ("max_tokens", JInt(8192))], reasoning_fields(reasoning))
   let with_tools := if list.is_empty(tools) {
     base
   } else {
@@ -458,8 +489,8 @@ fn str_field(j :: jv.Json, key :: Str) -> Str {
 # token counts at all, and delta.UsageDelta's contract is that absence means
 # "not reported", so the cost of a streamed turn would silently vanish from
 # the trail. Backends that don't know stream_options ignore the field.
-fn build_stream_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool]) -> Str {
-  let base := [("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(true)), ("stream_options", JObj([("include_usage", JBool(true))])), ("max_tokens", JInt(8192))]
+fn build_stream_request(model :: prov.ModelRef, messages :: List[msg.Message], tools :: List[t.Tool], reasoning :: Option[Str]) -> Str {
+  let base := list.concat([("model", JStr(model.model)), ("messages", JList(list.map(messages, encode_message))), ("stream", JBool(true)), ("stream_options", JObj([("include_usage", JBool(true))])), ("max_tokens", JInt(8192))], reasoning_fields(reasoning))
   let with_tools := if list.is_empty(tools) {
     base
   } else {
