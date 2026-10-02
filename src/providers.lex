@@ -47,6 +47,28 @@ fn openai() -> [env] prov.Provider {
   oai.make_provider(oai.with_timeout(oai.default_config(get_key("OPENAI_API_KEY")), tmo.resolved_timeout_ms()))
 }
 
+# OPENCODE_THINK controls reasoning the same way OLLAMA_THINK does for
+# ollama/lex-gpu (see ollama_think()'s comment) — unset leaves the
+# checkpoint's own default in place, "false" sends
+# chat_template_kwargs.enable_thinking=false, anything else
+# ("low"/"medium"/"high"/"xhigh") sends reasoning_effort. Unlike
+# ollama/lex-gpu, the Go plan fans out to several different backend
+# checkpoints (Kimi, GLM, Qwen3, MiniMax, MiMo — see opencode_model()'s
+# bake-off comment in lex-code's tools/index.lex), so whether either
+# field actually lands depends on which model is selected; an
+# OpenAI-compatible endpoint tolerates an unrecognized extra field, so
+# setting this for a model that ignores it is a no-op, not an error.
+fn opencode_think() -> [env] Option[Str] {
+  match env.get("OPENCODE_THINK") {
+    None => None,
+    Some(t) => if str.is_empty(t) {
+      None
+    } else {
+      Some(t)
+    },
+  }
+}
+
 # OpenCode Go plan — https://opencode.ai/docs/zen
 # Set OPENCODE_API_KEY to the key in ~/.credentials/opencode/key
 # Set OPENCODE_BASE_URL to route through a local proxy (e.g. bench/reasoning-proxy.py)
@@ -59,7 +81,7 @@ fn opencode_go() -> [env] prov.Provider {
       str.concat(u, "/chat/completions")
     },
   }
-  opencode_go_at_timeout(url, get_key("OPENCODE_API_KEY"), tmo.resolved_timeout_ms())
+  opencode_go_at_timeout_think(url, get_key("OPENCODE_API_KEY"), tmo.resolved_timeout_ms(), opencode_think())
 }
 
 # OpenCode Go plan with an explicit key and optional base-url override.
@@ -76,12 +98,20 @@ fn opencode_go() -> [env] prov.Provider {
 # endpoint (confirmed against the real API), so there is nothing this
 # needs beyond "consistent per key."
 fn opencode_go_at_timeout(url :: Str, key :: Str, timeout_ms :: Int) -> prov.Provider {
+  opencode_go_at_timeout_think(url, key, timeout_ms, None)
+}
+
+# Same as opencode_go_at_timeout, but with an explicit reasoning override —
+# split out the same way ollama_at/ollama_at_think are, so a pure caller
+# (select_provider below) keeps a plain signature while opencode_go() can
+# thread OPENCODE_THINK through.
+fn opencode_go_at_timeout_think(url :: Str, key :: Str, timeout_ms :: Int, think :: Option[Str]) -> prov.Provider {
   let base := if str.is_empty(url) {
     "https://opencode.ai/zen/go/v1/chat/completions"
   } else {
     url
   }
-  oai.make_provider({ api_key: key, base_url: base, extra_header: Some(("x-opencode-session", crypto.sha256_str(key))), timeout_ms: Some(timeout_ms), reasoning: None })
+  oai.make_provider({ api_key: key, base_url: base, extra_header: Some(("x-opencode-session", crypto.sha256_str(key))), timeout_ms: Some(timeout_ms), reasoning: think })
 }
 
 # The other hosted providers give up on a stalled call after the shared
