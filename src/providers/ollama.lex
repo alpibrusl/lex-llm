@@ -201,6 +201,33 @@ fn parse_stream(lines :: List[Str]) -> Iter[d.Delta] {
   iter.from_list(deltas)
 }
 
+# Ollama reports token counts on the final (done:true) chunk as top-level
+# prompt_eval_count / eval_count. Absent or zero => no UsageDelta, not a zero:
+# callers must not conflate "not reported" with "free". A prompt served
+# entirely from Ollama's KV cache can report prompt_eval_count of 0 while the
+# completion count is still real, so only an all-zero pair is dropped.
+fn parse_usage(j :: jv.Json) -> List[d.Delta]
+  examples {
+    parse_usage(JObj([("prompt_eval_count", JInt(10)), ("eval_count", JInt(3))])) => [UsageDelta(10, 3, 13)],
+    parse_usage(JObj([("prompt_eval_count", JInt(0)), ("eval_count", JInt(7))])) => [UsageDelta(0, 7, 7)],
+    parse_usage(JObj([("done", JBool(true))])) => []
+  }
+{
+  let p := match jv.get_field(j, "prompt_eval_count") {
+    Some(JInt(v)) => v,
+    _ => 0,
+  }
+  let c := match jv.get_field(j, "eval_count") {
+    Some(JInt(v)) => v,
+    _ => 0,
+  }
+  if p == 0 and c == 0 {
+    []
+  } else {
+    [UsageDelta(p, c, p + c)]
+  }
+}
+
 fn parse_chunk(j :: jv.Json) -> List[d.Delta] {
   let done := match jv.get_field(j, "done") {
     Some(JBool(b)) => b,
@@ -215,7 +242,7 @@ fn parse_chunk(j :: jv.Json) -> List[d.Delta] {
   }
   let finish_deltas := if done {
     let reason := finish_reason_from_msg(j)
-    [FinishDelta(reason)]
+    list.concat(parse_usage(j), [FinishDelta(reason)])
   } else {
     []
   }
@@ -259,7 +286,13 @@ fn parse_assistant_message(mj :: jv.Json) -> List[d.Delta] {
       [TextChunk(content)]
     }
   }
-  list.concat(text_deltas, call_deltas)
+  let answered_in_thinking := str.is_empty(str.trim(raw_content)) and list.is_empty(call_deltas)
+  let thinking_deltas := if str.is_empty(thinking) or answered_in_thinking {
+    []
+  } else {
+    [ThinkingDelta(thinking)]
+  }
+  list.concat(thinking_deltas, list.concat(text_deltas, call_deltas))
 }
 
 # ---- qwen3 XML tool call parser ------------------------------------
@@ -487,30 +520,40 @@ fn finish_reason_from_msg(j :: jv.Json) -> Str {
 #
 # Native `tool_calls` on a chunk bypass all of this: they are structured,
 # they arrive whole, and they are emitted immediately.
-type StreamState = { buf :: Str, flushed :: Bool, saw_native :: Bool }
+# `thought` accumulates the reasoning text only so a stream that produced NO
+# answer can still fall back to it (see finish_deltas); capped so the state,
+# which is re-encoded on every chunk, cannot grow without bound.
+type StreamState = { buf :: Str, flushed :: Bool, saw_native :: Bool, thought :: Str }
+
+fn thought_cap() -> Int {
+  20000
+}
 
 fn init_state() -> jv.Json {
-  encode_stream_state({ buf: "", flushed: false, saw_native: false })
+  encode_stream_state({ buf: "", flushed: false, saw_native: false, thought: "" })
 }
 
 fn encode_stream_state(st :: StreamState) -> jv.Json
   examples {
-    encode_stream_state({ buf: "hi", flushed: true, saw_native: false }) => JObj([("buf", JStr("hi")), ("flushed", JBool(true)), ("saw_native", JBool(false))])
+    encode_stream_state({ buf: "hi", flushed: true, saw_native: false, thought: "" }) => JObj([("buf", JStr("hi")), ("flushed", JBool(true)), ("saw_native", JBool(false)), ("thought", JStr(""))])
   }
 {
-  JObj([("buf", JStr(st.buf)), ("flushed", JBool(st.flushed)), ("saw_native", JBool(st.saw_native))])
+  JObj([("buf", JStr(st.buf)), ("flushed", JBool(st.flushed)), ("saw_native", JBool(st.saw_native)), ("thought", JStr(st.thought))])
 }
 
 fn decode_stream_state(j :: jv.Json) -> StreamState
   examples {
-    decode_stream_state(JObj([("buf", JStr("hi")), ("flushed", JBool(true)), ("saw_native", JBool(false))])) => { buf: "hi", flushed: true, saw_native: false },
-    decode_stream_state(JNull) => { buf: "", flushed: false, saw_native: false }
+    decode_stream_state(JObj([("buf", JStr("hi")), ("flushed", JBool(true)), ("saw_native", JBool(false)), ("thought", JStr("t"))])) => { buf: "hi", flushed: true, saw_native: false, thought: "t" },
+    decode_stream_state(JNull) => { buf: "", flushed: false, saw_native: false, thought: "" }
   }
 {
   { buf: match jv.get_field(j, "buf") {
     Some(JStr(s)) => s,
     _ => "",
-  }, flushed: bool_field(j, "flushed"), saw_native: bool_field(j, "saw_native") }
+  }, flushed: bool_field(j, "flushed"), saw_native: bool_field(j, "saw_native"), thought: match jv.get_field(j, "thought") {
+    Some(JStr(s)) => s,
+    _ => "",
+  } }
 }
 
 fn bool_field(j :: jv.Json, key :: Str) -> Bool {
@@ -598,11 +641,20 @@ fn step_chunk(st :: StreamState, j :: jv.Json) -> (jv.Json, List[d.Delta]) {
     None => "",
     Some(m) => chunk_text(m),
   }
+  let thinking := match mj {
+    None => "",
+    Some(m) => thinking_text(m),
+  }
+  let thinking_deltas := if str.is_empty(thinking) {
+    []
+  } else {
+    [ThinkingDelta(thinking)]
+  }
   let after_native := { buf: st.buf, flushed: st.flushed, saw_native: if list.is_empty(native) {
     st.saw_native
   } else {
     true
-  } }
+  }, thought: keep_thought(st.thought, thinking) }
   match step_text(after_native, fragment) {
     (next_st, text_deltas) => {
       let tail := if done {
@@ -610,25 +662,42 @@ fn step_chunk(st :: StreamState, j :: jv.Json) -> (jv.Json, List[d.Delta]) {
       } else {
         []
       }
-      (encode_stream_state(next_st), list.concat(native, list.concat(text_deltas, tail)))
+      (encode_stream_state(next_st), list.concat(thinking_deltas, list.concat(native, list.concat(text_deltas, tail))))
     },
   }
 }
 
-# `content` is the visible text; a thinking model puts its trace in
-# `thinking` and leaves content empty, same as the buffered path.
+fn keep_thought(so_far :: Str, fragment :: Str) -> Str
+  examples {
+    keep_thought("", "ab") => "ab",
+    keep_thought("ab", "") => "ab",
+    keep_thought("ab", "cd") => "abcd"
+  }
+{
+  if str.len(so_far) >= thought_cap() {
+    so_far
+  } else {
+    str.concat(so_far, fragment)
+  }
+}
+
+# `content` is the visible text. A thinking model streams its trace in
+# `thinking` (ahead of the answer, and counted in eval_count); that is surfaced
+# as ThinkingDelta, never as text — handing it back as text whenever content was
+# empty put the trace in front of the answer. A stream that ends with NO answer
+# and no tool call still falls back to the trace as the reply (finish_deltas),
+# the same rule the buffered path has.
 fn chunk_text(mj :: jv.Json) -> Str {
-  let content := match jv.get_field(mj, "content") {
+  match jv.get_field(mj, "content") {
     Some(JStr(s)) => s,
     _ => "",
   }
-  if str.is_empty(content) {
-    match jv.get_field(mj, "thinking") {
-      Some(JStr(s)) => s,
-      _ => "",
-    }
-  } else {
-    content
+}
+
+fn thinking_text(mj :: jv.Json) -> Str {
+  match jv.get_field(mj, "thinking") {
+    Some(JStr(s)) => s,
+    _ => "",
   }
 }
 
@@ -643,9 +712,9 @@ fn step_text(st :: StreamState, fragment :: Str) -> (StreamState, List[d.Delta])
   } else {
     let buf := str.concat(st.buf, fragment)
     if maybe_xml(buf) {
-      ({ buf: buf, flushed: false, saw_native: st.saw_native }, [])
+      ({ buf: buf, flushed: false, saw_native: st.saw_native, thought: st.thought }, [])
     } else {
-      ({ buf: "", flushed: true, saw_native: st.saw_native }, [TextChunk(buf)])
+      ({ buf: "", flushed: true, saw_native: st.saw_native, thought: st.thought }, [TextChunk(buf)])
     }
   }
 }
@@ -674,6 +743,12 @@ fn finish_deltas(st :: StreamState, j :: jv.Json) -> List[d.Delta] {
       }
     }
   }
-  list.concat(tail, [FinishDelta(finish_reason_from_msg(j))])
+  let no_answer := str.is_empty(held) and not st.flushed and not st.saw_native and not str.is_empty(str.trim(st.thought))
+  let fallback := if no_answer {
+    [TextChunk(st.thought)]
+  } else {
+    []
+  }
+  list.concat(list.concat(fallback, tail), list.concat(parse_usage(j), [FinishDelta(finish_reason_from_msg(j))]))
 }
 

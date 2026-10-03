@@ -105,7 +105,9 @@ fn with_permission_gate(agent :: AgentLoop, spec :: sp.Spec) -> AgentLoop {
 # emitted a UsageDelta this turn (either it doesn't report usage, or genuinely
 # used 0) -- callers wanting to distinguish "not reported" from "free" should
 # check total_tokens == 0 at the Step level via StepDelta(UsageDelta(...)).
-type CollectedResponse = { content :: Str, tool_calls :: List[CollectedCall], finish_reason :: Str, prompt_tokens :: Int, completion_tokens :: Int, total_tokens :: Int }
+# thinking_chars counts the reasoning text (ThinkingDelta) a provider streamed back:
+# generated and billed, but not part of `content`. Bytes, as str.len reports them.
+type CollectedResponse = { content :: Str, tool_calls :: List[CollectedCall], finish_reason :: Str, prompt_tokens :: Int, completion_tokens :: Int, total_tokens :: Int, thinking_chars :: Int }
 
 # Tool call with args fully assembled from streaming ToolArgChunk events.
 type CollectedCall = { id :: Str, name :: Str, args_raw :: Str }
@@ -281,7 +283,7 @@ fn run_steps_streamed(agent :: AgentLoop, conv :: List[msg.Message], budget :: I
       StepDelta(dl)
     })
     let response := collect_response(raw_deltas)
-    let step_payload := llm_step_json(agent.model, list.len(response.tool_calls))
+    let step_payload := llm_step_json(agent.model, list.len(response.tool_calls), response.prompt_tokens, response.completion_tokens, response.thinking_chars)
     let step_evt := trail.append(log, kinds.llm_step(), parent, step_payload)
     let step_id := match step_evt {
       Ok(evt) => Some(evt.id),
@@ -399,7 +401,7 @@ fn run_steps_traced(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int
       StepDelta(dl)
     })
     let response := collect_response(raw_deltas)
-    let step_payload := llm_step_json(agent.model, list.len(response.tool_calls))
+    let step_payload := llm_step_json(agent.model, list.len(response.tool_calls), response.prompt_tokens, response.completion_tokens, response.thinking_chars)
     let step_evt := trail.append(log, kinds.llm_step(), parent, step_payload)
     let step_id := match step_evt {
       Ok(evt) => Some(evt.id),
@@ -466,10 +468,11 @@ fn bindings_from_conv(conv :: List[msg.Message]) -> List[(Str, sp.SpecValue)] {
 fn collect_response(deltas :: List[d.Delta]) -> CollectedResponse {
   list.fold(deltas, empty_response(), fn (acc :: CollectedResponse, dl :: d.Delta) -> CollectedResponse {
     match dl {
-      TextChunk(s) => { content: str.concat(acc.content, s), tool_calls: acc.tool_calls, finish_reason: acc.finish_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens },
-      ToolCallBegin(id, name) => { content: acc.content, tool_calls: list.cons({ id: id, name: name, args_raw: "" }, acc.tool_calls), finish_reason: acc.finish_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens },
-      ToolArgChunk(id, chunk) => { content: acc.content, tool_calls: append_arg_chunk(acc.tool_calls, id, chunk), finish_reason: acc.finish_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens },
-      UsageDelta(p, c, t) => { content: acc.content, tool_calls: acc.tool_calls, finish_reason: acc.finish_reason, prompt_tokens: p, completion_tokens: c, total_tokens: t },
+      TextChunk(s) => { content: str.concat(acc.content, s), tool_calls: acc.tool_calls, finish_reason: acc.finish_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens, thinking_chars: acc.thinking_chars },
+      ToolCallBegin(id, name) => { content: acc.content, tool_calls: list.cons({ id: id, name: name, args_raw: "" }, acc.tool_calls), finish_reason: acc.finish_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens, thinking_chars: acc.thinking_chars },
+      ToolArgChunk(id, chunk) => { content: acc.content, tool_calls: append_arg_chunk(acc.tool_calls, id, chunk), finish_reason: acc.finish_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens, thinking_chars: acc.thinking_chars },
+      ThinkingDelta(s) => { content: acc.content, tool_calls: acc.tool_calls, finish_reason: acc.finish_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens, thinking_chars: acc.thinking_chars + str.len(s) },
+      UsageDelta(p, c, t) => { content: acc.content, tool_calls: acc.tool_calls, finish_reason: acc.finish_reason, prompt_tokens: p, completion_tokens: c, total_tokens: t, thinking_chars: acc.thinking_chars },
       FinishDelta(reason) => {
         let calls := list.reverse(acc.tool_calls)
         let actual_reason := if reason == "stop" {
@@ -481,7 +484,7 @@ fn collect_response(deltas :: List[d.Delta]) -> CollectedResponse {
         } else {
           reason
         }
-        { content: acc.content, tool_calls: calls, finish_reason: actual_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens }
+        { content: acc.content, tool_calls: calls, finish_reason: actual_reason, prompt_tokens: acc.prompt_tokens, completion_tokens: acc.completion_tokens, total_tokens: acc.total_tokens, thinking_chars: acc.thinking_chars }
       },
     }
   })
@@ -489,10 +492,10 @@ fn collect_response(deltas :: List[d.Delta]) -> CollectedResponse {
 
 fn empty_response() -> CollectedResponse
   examples {
-    empty_response() => { content: "", tool_calls: [], finish_reason: "stop", prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+    empty_response() => { content: "", tool_calls: [], finish_reason: "stop", prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, thinking_chars: 0 }
   }
 {
-  { content: "", tool_calls: [], finish_reason: "stop", prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+  { content: "", tool_calls: [], finish_reason: "stop", prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, thinking_chars: 0 }
 }
 
 fn append_arg_chunk(calls :: List[CollectedCall], id :: Str, chunk :: Str) -> List[CollectedCall] {
@@ -640,12 +643,13 @@ fn dispatches_to_messages(dispatches :: List[Dispatch]) -> List[msg.Message] {
 }
 
 # ---- Trail JSON helpers ------------------------------------------
-fn llm_step_json(model :: prov.ModelRef, tool_call_count :: Int) -> Str
+fn llm_step_json(model :: prov.ModelRef, tool_call_count :: Int, tokens_in :: Int, tokens_out :: Int, thinking_chars :: Int) -> Str
   examples {
-    llm_step_json(prov.claude_sonnet(), 2) => "{\"model\":\"claude-sonnet-5\",\"tokens_in\":0,\"tokens_out\":0,\"tool_calls\":2}"
+    llm_step_json(prov.claude_sonnet(), 2, 0, 0, 0) => "{\"model\":\"claude-sonnet-5\",\"tokens_in\":0,\"tokens_out\":0,\"thinking_chars\":0,\"tool_calls\":2}",
+    llm_step_json(prov.claude_sonnet(), 1, 10040, 61, 480) => "{\"model\":\"claude-sonnet-5\",\"tokens_in\":10040,\"tokens_out\":61,\"thinking_chars\":480,\"tool_calls\":1}"
   }
 {
-  str.join(["{\"model\":\"", model.model, "\",\"tokens_in\":0,\"tokens_out\":0,\"tool_calls\":", int.to_str(tool_call_count), "}"], "")
+  str.join(["{\"model\":\"", model.model, "\",\"tokens_in\":", int.to_str(tokens_in), ",\"tokens_out\":", int.to_str(tokens_out), ",\"thinking_chars\":", int.to_str(thinking_chars), ",\"tool_calls\":", int.to_str(tool_call_count), "}"], "")
 }
 
 fn cap_invoked_json(name :: Str, args_raw :: Str) -> Str

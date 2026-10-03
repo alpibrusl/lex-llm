@@ -44,6 +44,7 @@ fn show(dl :: d.Delta) -> Str {
     ToolArgChunk(id, chunk) => str.join(["Arg(", id, ",", chunk, ")"], ""),
     FinishDelta(r) => str.join(["Finish(", r, ")"], ""),
     UsageDelta(p, c, t) => str.join(["Usage(", int.to_str(p), ",", int.to_str(c), ",", int.to_str(t), ")"], ""),
+    ThinkingDelta(s) => str.join(["Think(", s, ")"], ""),
   }
 }
 
@@ -229,6 +230,32 @@ fn test_ollama_native_tool_call() -> Result[Unit, Str] {
   }
 }
 
+# ---- thinking: its own delta, never text -------------------------
+# A reasoning model streams `thinking` ahead of the answer. It must come out as
+# ThinkingDelta so the reply is only the reply (before this, a streaming adapter
+# returned it as text whenever the answer was still empty).
+fn test_ollama_thinking_then_answer() -> Result[Unit, Str] {
+  match replay_of(ollama_provider(), ["{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"thinking\":\"The user \"},\"done\":false}", "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"thinking\":\"wants hi.\"},\"done\":false}", "{\"message\":{\"role\":\"assistant\",\"content\":\"Hi!\"},\"done\":false}", "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"prompt_eval_count\":10,\"eval_count\":7}"]) {
+    Err(e) => Err(e),
+    Ok(got) => expect("ollama thinking then answer", got, "Think(The user ) Think(wants hi.) Text(Hi!) Usage(10,7,17) Finish(stop)"),
+  }
+}
+
+fn test_ollama_thinking_with_tool_call() -> Result[Unit, Str] {
+  match replay_of(ollama_provider(), ["{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"thinking\":\"read it\"},\"done\":false}", "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"function\":{\"name\":\"read\",\"arguments\":{\"path\":\"a\"}}}]},\"done\":true}"]) {
+    Err(e) => Err(e),
+    Ok(got) => expect("ollama thinking with tool call", got, "Think(read it) Begin(call_read_0,read) Arg(call_read_0,{\"path\":\"a\"}) Finish(tool_calls)"),
+  }
+}
+
+# The one case the trace IS the reply: nothing else came back.
+fn test_ollama_only_thinking_falls_back() -> Result[Unit, Str] {
+  match replay_of(ollama_provider(), ["{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"thinking\":\"42\"},\"done\":false}", "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true}"]) {
+    Err(e) => Err(e),
+    Ok(got) => expect("ollama only thinking", got, "Think(42) Text(42) Finish(stop)"),
+  }
+}
+
 # ---- sse.strip_cr -------------------------------------------------
 fn test_strip_cr() -> Result[Unit, Str] {
   if sse.strip_cr("data: {}\r") == "data: {}" {
@@ -274,7 +301,7 @@ fn test_cursor_starts_open() -> Result[Unit, Str] {
 }
 
 fn run_all() -> [io] Int {
-  let results := [("streaming_declared", test_streaming_declared()), ("google_declares_none", test_google_declares_none()), ("mistral_inherits_streaming", test_mistral_inherits_streaming()), ("openai_text_chunks", test_openai_text_chunks()), ("openai_split_tool_call", test_openai_split_tool_call()), ("openai_two_tool_calls", test_openai_two_tool_calls()), ("openai_usage_chunk", test_openai_usage_chunk()), ("openai_ignores_framing", test_openai_ignores_framing()), ("anthropic_text_and_finish", test_anthropic_text_and_finish()), ("anthropic_tool_use_routing", test_anthropic_tool_use_routing()), ("anthropic_crlf", test_anthropic_crlf()), ("ollama_text_flushes", test_ollama_text_flushes()), ("ollama_xml_tool_call_held_back", test_ollama_xml_tool_call_held_back()), ("ollama_angle_bracket_prose", test_ollama_angle_bracket_prose()), ("ollama_native_tool_call", test_ollama_native_tool_call()), ("lex_gpu_stream", test_lex_gpu_stream()), ("strip_cr", test_strip_cr()), ("cursor_starts_open", test_cursor_starts_open())]
+  let results := [("streaming_declared", test_streaming_declared()), ("google_declares_none", test_google_declares_none()), ("mistral_inherits_streaming", test_mistral_inherits_streaming()), ("openai_text_chunks", test_openai_text_chunks()), ("openai_split_tool_call", test_openai_split_tool_call()), ("openai_two_tool_calls", test_openai_two_tool_calls()), ("openai_usage_chunk", test_openai_usage_chunk()), ("openai_ignores_framing", test_openai_ignores_framing()), ("anthropic_text_and_finish", test_anthropic_text_and_finish()), ("anthropic_tool_use_routing", test_anthropic_tool_use_routing()), ("anthropic_crlf", test_anthropic_crlf()), ("ollama_text_flushes", test_ollama_text_flushes()), ("ollama_xml_tool_call_held_back", test_ollama_xml_tool_call_held_back()), ("ollama_angle_bracket_prose", test_ollama_angle_bracket_prose()), ("ollama_native_tool_call", test_ollama_native_tool_call()), ("ollama_thinking_then_answer", test_ollama_thinking_then_answer()), ("ollama_thinking_with_tool_call", test_ollama_thinking_with_tool_call()), ("ollama_only_thinking_falls_back", test_ollama_only_thinking_falls_back()), ("lex_gpu_stream", test_lex_gpu_stream()), ("strip_cr", test_strip_cr()), ("cursor_starts_open", test_cursor_starts_open())]
   list.fold(results, 0, fn (failures :: Int, entry :: (Str, Result[Unit, Str])) -> [io] Int {
     match entry {
       (name, result) => match result {

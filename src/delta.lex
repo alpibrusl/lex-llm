@@ -9,20 +9,32 @@ import "./message" as msg
 
 import "std.str" as str
 
+import "std.list" as list
+
 # Provider-level streaming chunk.
 # UsageDelta carries (prompt_tokens, completion_tokens, total_tokens) from the
 # provider's own response when it reports them (e.g. OpenAI-compatible chat
 # completions' top-level "usage" object) -- providers that don't report usage
 # simply never emit this variant, so callers should treat its absence as
 # "unknown", not "zero cost".
-type Delta = TextChunk(Str) | ToolCallBegin((Str, Str)) | ToolArgChunk((Str, Str)) | FinishDelta(Str) | UsageDelta((Int, Int, Int))
+#
+# ThinkingDelta carries a model's reasoning trace -- text it generated and was
+# billed for but that is not part of its answer (Ollama's `message.thinking`).
+# It is its own variant so it can be counted and shown without being mistaken
+# for the reply: before it existed, a streaming adapter handed thinking to the
+# caller as ordinary text whenever the answer was still empty, so a reasoning
+# model's trace ran into the front of its answer. A caller that does not care
+# about reasoning ignores it (a wildcard arm is enough); nothing about the
+# answer changes.
+type Delta = TextChunk(Str) | ToolCallBegin((Str, Str)) | ToolArgChunk((Str, Str)) | FinishDelta(Str) | UsageDelta((Int, Int, Int)) | ThinkingDelta(Str)
 
 type Step = StepDelta(Delta) | StepToolExec((Str, Str)) | StepToolResult((Str, Bool)) | StepDone(msg.Message)
 
 fn is_finish(delta :: Delta) -> Bool
   examples {
     is_finish(TextChunk("hi")) => false,
-    is_finish(FinishDelta("stop")) => true
+    is_finish(FinishDelta("stop")) => true,
+    is_finish(ThinkingDelta("hmm")) => false
   }
 {
   match delta {
@@ -34,7 +46,8 @@ fn is_finish(delta :: Delta) -> Bool
 fn finish_reason(delta :: Delta) -> Option[Str]
   examples {
     finish_reason(TextChunk("x")) => None,
-    finish_reason(FinishDelta("stop")) => Some("stop")
+    finish_reason(FinishDelta("stop")) => Some("stop"),
+    finish_reason(ThinkingDelta("hmm")) => None
   }
 {
   match delta {
@@ -60,5 +73,32 @@ fn provider_error(reason :: Str) -> List[Delta]
   }
 {
   [TextChunk(str.join(["[provider error: ", reason, "]"], "")), FinishDelta("provider_error")]
+}
+
+# Gemini repeats a CUMULATIVE usageMetadata on every streamed chunk, and a
+# caller that sums UsageDeltas across a turn (lex-code's turn_usage does)
+# would count the same prompt once per chunk. Keep only the last one — the
+# final chunk's totals — and put it ahead of the rest of the turn.
+fn keep_last_usage(deltas :: List[Delta]) -> List[Delta]
+  examples {
+    keep_last_usage([]) => [],
+    keep_last_usage([TextChunk("a"), UsageDelta(5, 1, 6), TextChunk("b"), UsageDelta(5, 2, 7)]) => [UsageDelta(5, 2, 7), TextChunk("a"), TextChunk("b")],
+    keep_last_usage([TextChunk("a")]) => [TextChunk("a")]
+  }
+{
+  let folded := list.fold(deltas, ([], None), fn (acc :: (List[Delta], Option[Delta]), dl :: Delta) -> (List[Delta], Option[Delta]) {
+    match acc {
+      (rest, last) => match dl {
+        UsageDelta(_, _, _) => (rest, Some(dl)),
+        _ => (list.concat(rest, [dl]), last),
+      },
+    }
+  })
+  match folded {
+    (rest, last) => match last {
+      None => rest,
+      Some(u) => list.concat([u], rest),
+    },
+  }
 }
 
