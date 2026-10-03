@@ -21,6 +21,7 @@ fn delta_id_sig(dl :: d.Delta) -> Str {
     ToolArgChunk(id, _) => str.concat("Args:", id),
     FinishDelta(r) => str.concat("Finish:", r),
     UsageDelta(p, c, t) => str.join(["Usage:", int.to_str(p), ",", int.to_str(c), ",", int.to_str(t)], ""),
+    ThinkingDelta(s) => str.concat("Think:", s),
   }
 }
 

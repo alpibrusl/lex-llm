@@ -95,6 +95,7 @@ fn show_delta(dl :: d.Delta) -> Str {
     ToolArgChunk(id, c) => str.join(["Arg(", id, ",", c, ")"], ""),
     FinishDelta(r) => str.join(["Finish(", r, ")"], ""),
     UsageDelta(p, c, tt) => str.join(["Usage(", int.to_str(p), ",", int.to_str(c), ",", int.to_str(tt), ")"], ""),
+    ThinkingDelta(s) => str.join(["Think(", s, ")"], ""),
   }
 }
 

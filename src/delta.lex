@@ -17,14 +17,24 @@ import "std.list" as list
 # completions' top-level "usage" object) -- providers that don't report usage
 # simply never emit this variant, so callers should treat its absence as
 # "unknown", not "zero cost".
-type Delta = TextChunk(Str) | ToolCallBegin((Str, Str)) | ToolArgChunk((Str, Str)) | FinishDelta(Str) | UsageDelta((Int, Int, Int))
+#
+# ThinkingDelta carries a model's reasoning trace -- text it generated and was
+# billed for but that is not part of its answer (Ollama's `message.thinking`).
+# It is its own variant so it can be counted and shown without being mistaken
+# for the reply: before it existed, a streaming adapter handed thinking to the
+# caller as ordinary text whenever the answer was still empty, so a reasoning
+# model's trace ran into the front of its answer. A caller that does not care
+# about reasoning ignores it (a wildcard arm is enough); nothing about the
+# answer changes.
+type Delta = TextChunk(Str) | ToolCallBegin((Str, Str)) | ToolArgChunk((Str, Str)) | FinishDelta(Str) | UsageDelta((Int, Int, Int)) | ThinkingDelta(Str)
 
 type Step = StepDelta(Delta) | StepToolExec((Str, Str)) | StepToolResult((Str, Bool)) | StepDone(msg.Message)
 
 fn is_finish(delta :: Delta) -> Bool
   examples {
     is_finish(TextChunk("hi")) => false,
-    is_finish(FinishDelta("stop")) => true
+    is_finish(FinishDelta("stop")) => true,
+    is_finish(ThinkingDelta("hmm")) => false
   }
 {
   match delta {
@@ -36,7 +46,8 @@ fn is_finish(delta :: Delta) -> Bool
 fn finish_reason(delta :: Delta) -> Option[Str]
   examples {
     finish_reason(TextChunk("x")) => None,
-    finish_reason(FinishDelta("stop")) => Some("stop")
+    finish_reason(FinishDelta("stop")) => Some("stop"),
+    finish_reason(ThinkingDelta("hmm")) => None
   }
 {
   match delta {
