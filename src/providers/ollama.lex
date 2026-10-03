@@ -201,6 +201,33 @@ fn parse_stream(lines :: List[Str]) -> Iter[d.Delta] {
   iter.from_list(deltas)
 }
 
+# Ollama reports token counts on the final (done:true) chunk as top-level
+# prompt_eval_count / eval_count. Absent or zero => no UsageDelta, not a zero:
+# callers must not conflate "not reported" with "free". A prompt served
+# entirely from Ollama's KV cache can report prompt_eval_count of 0 while the
+# completion count is still real, so only an all-zero pair is dropped.
+fn parse_usage(j :: jv.Json) -> List[d.Delta]
+  examples {
+    parse_usage(JObj([("prompt_eval_count", JInt(10)), ("eval_count", JInt(3))])) => [UsageDelta(10, 3, 13)],
+    parse_usage(JObj([("prompt_eval_count", JInt(0)), ("eval_count", JInt(7))])) => [UsageDelta(0, 7, 7)],
+    parse_usage(JObj([("done", JBool(true))])) => []
+  }
+{
+  let p := match jv.get_field(j, "prompt_eval_count") {
+    Some(JInt(v)) => v,
+    _ => 0,
+  }
+  let c := match jv.get_field(j, "eval_count") {
+    Some(JInt(v)) => v,
+    _ => 0,
+  }
+  if p == 0 and c == 0 {
+    []
+  } else {
+    [UsageDelta(p, c, p + c)]
+  }
+}
+
 fn parse_chunk(j :: jv.Json) -> List[d.Delta] {
   let done := match jv.get_field(j, "done") {
     Some(JBool(b)) => b,
@@ -215,7 +242,7 @@ fn parse_chunk(j :: jv.Json) -> List[d.Delta] {
   }
   let finish_deltas := if done {
     let reason := finish_reason_from_msg(j)
-    [FinishDelta(reason)]
+    list.concat(parse_usage(j), [FinishDelta(reason)])
   } else {
     []
   }
@@ -674,6 +701,6 @@ fn finish_deltas(st :: StreamState, j :: jv.Json) -> List[d.Delta] {
       }
     }
   }
-  list.concat(tail, [FinishDelta(finish_reason_from_msg(j))])
+  list.concat(tail, list.concat(parse_usage(j), [FinishDelta(finish_reason_from_msg(j))]))
 }
 

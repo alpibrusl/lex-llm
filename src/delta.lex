@@ -9,6 +9,8 @@ import "./message" as msg
 
 import "std.str" as str
 
+import "std.list" as list
+
 # Provider-level streaming chunk.
 # UsageDelta carries (prompt_tokens, completion_tokens, total_tokens) from the
 # provider's own response when it reports them (e.g. OpenAI-compatible chat
@@ -62,3 +64,29 @@ fn provider_error(reason :: Str) -> List[Delta]
   [TextChunk(str.join(["[provider error: ", reason, "]"], "")), FinishDelta("provider_error")]
 }
 
+# Gemini repeats a CUMULATIVE usageMetadata on every streamed chunk, and a
+# caller that sums UsageDeltas across a turn (lex-code's turn_usage does)
+# would count the same prompt once per chunk. Keep only the last one — the
+# final chunk's totals — and put it ahead of the rest of the turn.
+fn keep_last_usage(deltas :: List[Delta]) -> List[Delta]
+  examples {
+    keep_last_usage([]) => [],
+    keep_last_usage([TextChunk("a"), UsageDelta(5, 1, 6), TextChunk("b"), UsageDelta(5, 2, 7)]) => [UsageDelta(5, 2, 7), TextChunk("a"), TextChunk("b")],
+    keep_last_usage([TextChunk("a")]) => [TextChunk("a")]
+  }
+{
+  let folded := list.fold(deltas, ([], None), fn (acc :: (List[Delta], Option[Delta]), dl :: Delta) -> (List[Delta], Option[Delta]) {
+    match acc {
+      (rest, last) => match dl {
+        UsageDelta(_, _, _) => (rest, Some(dl)),
+        _ => (list.concat(rest, [dl]), last),
+      },
+    }
+  })
+  match folded {
+    (rest, last) => match last {
+      None => rest,
+      Some(u) => list.concat([u], rest),
+    },
+  }
+}

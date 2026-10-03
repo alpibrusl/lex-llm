@@ -144,17 +144,53 @@ fn parse_stream(lines :: List[Str]) -> Iter[d.Delta] {
       }
     }
   })
-  iter.from_list(deltas)
+  iter.from_list(d.keep_last_usage(deltas))
+}
+
+# Gemini reports usageMetadata on every chunk; thoughtsTokenCount is billed
+# as output, so it is folded into the completion count. Callers dedupe the
+# per-chunk repeats with d.keep_last_usage. Absent or all-zero => no delta.
+fn usage_deltas(j :: jv.Json) -> List[d.Delta]
+  examples {
+    usage_deltas(JObj([("usageMetadata", JObj([("promptTokenCount", JInt(100)), ("candidatesTokenCount", JInt(20)), ("thoughtsTokenCount", JInt(30))]))])) => [UsageDelta(100, 50, 150)],
+    usage_deltas(JObj([("usageMetadata", JObj([("promptTokenCount", JInt(100)), ("candidatesTokenCount", JInt(20))]))])) => [UsageDelta(100, 20, 120)],
+    usage_deltas(JObj([("candidates", JList([]))])) => []
+  }
+{
+  match jv.get_field(j, "usageMetadata") {
+    Some(um) => {
+      let p := match jv.get_field(um, "promptTokenCount") {
+        Some(JInt(v)) => v,
+        _ => 0,
+      }
+      let cand := match jv.get_field(um, "candidatesTokenCount") {
+        Some(JInt(v)) => v,
+        _ => 0,
+      }
+      let thoughts := match jv.get_field(um, "thoughtsTokenCount") {
+        Some(JInt(v)) => v,
+        _ => 0,
+      }
+      let c := cand + thoughts
+      if p == 0 and c == 0 {
+        []
+      } else {
+        [UsageDelta(p, c, p + c)]
+      }
+    },
+    _ => [],
+  }
 }
 
 fn parse_chunk(j :: jv.Json) -> List[d.Delta] {
-  match jv.get_field(j, "candidates") {
+  let cand_deltas := match jv.get_field(j, "candidates") {
     Some(JList(cands)) => match first(cands) {
       None => [],
       Some(c) => parse_candidate(c),
     },
     _ => [],
   }
+  list.concat(cand_deltas, usage_deltas(j))
 }
 
 fn parse_candidate(cand :: jv.Json) -> List[d.Delta] {

@@ -281,7 +281,7 @@ fn run_steps_streamed(agent :: AgentLoop, conv :: List[msg.Message], budget :: I
       StepDelta(dl)
     })
     let response := collect_response(raw_deltas)
-    let step_payload := llm_step_json(agent.model, list.len(response.tool_calls))
+    let step_payload := llm_step_json(agent.model, list.len(response.tool_calls), response.prompt_tokens, response.completion_tokens)
     let step_evt := trail.append(log, kinds.llm_step(), parent, step_payload)
     let step_id := match step_evt {
       Ok(evt) => Some(evt.id),
@@ -399,7 +399,7 @@ fn run_steps_traced(agent :: AgentLoop, conv :: List[msg.Message], budget :: Int
       StepDelta(dl)
     })
     let response := collect_response(raw_deltas)
-    let step_payload := llm_step_json(agent.model, list.len(response.tool_calls))
+    let step_payload := llm_step_json(agent.model, list.len(response.tool_calls), response.prompt_tokens, response.completion_tokens)
     let step_evt := trail.append(log, kinds.llm_step(), parent, step_payload)
     let step_id := match step_evt {
       Ok(evt) => Some(evt.id),
@@ -640,12 +640,13 @@ fn dispatches_to_messages(dispatches :: List[Dispatch]) -> List[msg.Message] {
 }
 
 # ---- Trail JSON helpers ------------------------------------------
-fn llm_step_json(model :: prov.ModelRef, tool_call_count :: Int) -> Str
+fn llm_step_json(model :: prov.ModelRef, tool_call_count :: Int, tokens_in :: Int, tokens_out :: Int) -> Str
   examples {
-    llm_step_json(prov.claude_sonnet(), 2) => "{\"model\":\"claude-sonnet-5\",\"tokens_in\":0,\"tokens_out\":0,\"tool_calls\":2}"
+    llm_step_json(prov.claude_sonnet(), 2, 0, 0) => "{\"model\":\"claude-sonnet-5\",\"tokens_in\":0,\"tokens_out\":0,\"tool_calls\":2}",
+    llm_step_json(prov.claude_sonnet(), 1, 10040, 61) => "{\"model\":\"claude-sonnet-5\",\"tokens_in\":10040,\"tokens_out\":61,\"tool_calls\":1}"
   }
 {
-  str.join(["{\"model\":\"", model.model, "\",\"tokens_in\":0,\"tokens_out\":0,\"tool_calls\":", int.to_str(tool_call_count), "}"], "")
+  str.join(["{\"model\":\"", model.model, "\",\"tokens_in\":", int.to_str(tokens_in), ",\"tokens_out\":", int.to_str(tokens_out), ",\"tool_calls\":", int.to_str(tool_call_count), "}"], "")
 }
 
 fn cap_invoked_json(name :: Str, args_raw :: Str) -> Str
